@@ -334,6 +334,13 @@ set_property(TARGET basalt::opencv PROPERTY INTERFACE_LINK_LIBRARIES ${OpenCV_LI
 find_package(fmt REQUIRED)
 message(STATUS "Found {fmt} ${fmt_VERSION} in: ${fmt_DIR}")
 
+# Prevent Eigen from creating duplicate uninstall target
+set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
+# Set policy to allow duplicate custom targets (for uninstall)
+if(POLICY CMP0002)
+  cmake_policy(SET CMP0002 OLD)
+endif()
+
 add_subdirectory(thirdparty)
 
 # custom scoped cli11 target
