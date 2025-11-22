@@ -36,25 +36,50 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/io/dataset_io.h>
 #include <basalt/io/dataset_io_euroc.h>
 #include <basalt/io/dataset_io_kitti.h>
-#include <basalt/io/dataset_io_rosbag.h>
 #include <basalt/io/dataset_io_uzh.h>
+
+#ifdef BASALT_USE_ROS1
+#include <basalt/io/dataset_io_rosbag.h>
+#endif
+
+#ifdef BASALT_USE_ROS2
+#include <basalt/io/dataset_io_rosbag2.h>
+#include <basalt/io/rosbag2_storage_detector.h>
+#endif
 
 namespace basalt {
 
 DatasetIoInterfacePtr DatasetIoFactory::getDatasetIo(
     const std::string &dataset_type, bool load_mocap_as_gt) {
   if (dataset_type == "euroc") {
-    // return DatasetIoInterfacePtr();
     return DatasetIoInterfacePtr(new EurocIO(load_mocap_as_gt));
-  } else if (dataset_type == "bag") {
+  }
+#ifdef BASALT_USE_ROS1
+  else if (dataset_type == "bag" || dataset_type == "rosbag") {
     return DatasetIoInterfacePtr(new RosbagIO);
-  } else if (dataset_type == "uzh") {
+  }
+#endif
+#ifdef BASALT_USE_ROS2
+  else if (dataset_type == "bag2" || dataset_type == "rosbag2" ||
+           dataset_type == "mcap" || dataset_type == "db3") {
+    return DatasetIoInterfacePtr(new Rosbag2IO);
+  }
+#endif
+  else if (dataset_type == "uzh") {
     return DatasetIoInterfacePtr(new UzhIO);
   } else if (dataset_type == "kitti") {
     return DatasetIoInterfacePtr(new KittiIO);
   } else {
     std::cerr << "Dataset type " << dataset_type << " is not supported"
               << std::endl;
+    std::cerr << "Supported types: euroc, ";
+#ifdef BASALT_USE_ROS1
+    std::cerr << "bag/rosbag (ROS1), ";
+#endif
+#ifdef BASALT_USE_ROS2
+    std::cerr << "bag2/rosbag2/mcap/db3 (ROS2), ";
+#endif
+    std::cerr << "uzh, kitti" << std::endl;
     std::abort();
   }
 }

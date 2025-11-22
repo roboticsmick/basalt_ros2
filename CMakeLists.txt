@@ -90,6 +90,58 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
+# ROS Support Options
+option(USE_ROS2 "Enable ROS2 bag support" ON)
+option(USE_ROS1 "Enable ROS1 bag support (legacy)" ON)
+
+# ROS2 Support
+if(USE_ROS2)
+    find_package(ament_cmake QUIET)
+    if(ament_cmake_FOUND)
+        message(STATUS "Found ament_cmake, enabling ROS2 support")
+
+        find_package(rosbag2_cpp REQUIRED)
+        find_package(rosbag2_storage REQUIRED)
+        find_package(rosbag2_storage_default_plugins REQUIRED)
+        find_package(rclcpp REQUIRED)
+        find_package(sensor_msgs REQUIRED)
+        find_package(geometry_msgs REQUIRED)
+
+        # Optional: compression support
+        find_package(rosbag2_compression QUIET)
+        if(rosbag2_compression_FOUND)
+            add_definitions(-DBASALT_ROS2_COMPRESSION_SUPPORT)
+            message(STATUS "ROS2 compression support enabled")
+        endif()
+
+        add_definitions(-DBASALT_USE_ROS2)
+
+        set(ROS2_DEPS
+            rosbag2_cpp
+            rosbag2_storage
+            rosbag2_storage_default_plugins
+            rclcpp
+            sensor_msgs
+            geometry_msgs)
+
+        if(rosbag2_compression_FOUND)
+            list(APPEND ROS2_DEPS rosbag2_compression)
+        endif()
+
+        message(STATUS "ROS2 support enabled with storage plugins (MCAP, SQLite3)")
+    else()
+        message(WARNING "ROS2 requested but ament_cmake not found. Disabling ROS2 support.")
+        set(USE_ROS2 OFF)
+    endif()
+endif()
+
+# ROS1 Support
+if(USE_ROS1)
+    add_definitions(-DBASALT_USE_ROS1)
+    message(STATUS "ROS1 bag support enabled (legacy)")
+endif()
+
+
 # Flags used for CHECK_CXX_SOURCE_COMPILES
 set(CMAKE_REQUIRED_FLAGS "-Wno-error")
 
@@ -313,6 +365,7 @@ target_sources(basalt
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_rosbag.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_uzh.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/marg_data_io.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/rosbag2_storage_detector.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/block_diagonal.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/imu_block.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/landmark_block.hpp
@@ -385,9 +438,25 @@ target_sources(basalt
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/vio_estimator.cpp
 )
 
+# Add ROS2 support files if enabled
+if(USE_ROS2)
+    target_sources(basalt
+      PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_rosbag2.h
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/dataset_io_rosbag2.cpp
+    )
+endif()
+
 target_link_libraries(basalt
   PUBLIC ${STD_CXX_FS} basalt::opencv basalt::basalt-headers TBB::tbb
   PRIVATE basalt::magic_enum rosbag apriltag opengv nlohmann::json fmt::fmt)
+
+# Add ROS2 libraries if enabled
+if(USE_ROS2)
+    target_link_libraries(basalt PRIVATE ${ROS2_DEPS})
+endif()
+
 target_include_directories(basalt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(basalt PUBLIC ${BASALT_COMPILE_DEFINITIONS})
 #target_compile_definitions(basalt PUBLIC BASALT_DISABLE_ASSERTS)

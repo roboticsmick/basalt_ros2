@@ -57,7 +57,8 @@ int main(int argc, char **argv) {
   app.add_option("--dataset-path", dataset_path, "Path to dataset")->required();
   app.add_option("--result-path", result_path, "Path to result folder")
       ->required();
-  app.add_option("--dataset-type", dataset_type, "Dataset type (euroc, bag)")
+  app.add_option("--dataset-type", dataset_type,
+                 "Dataset type: euroc, bag (ROS1), bag2/mcap/db3 (ROS2), uzh, kitti")
       ->required();
 
   app.add_option("--aprilgrid", aprilgrid_path,
