@@ -1,17 +1,30 @@
 cmake_minimum_required(VERSION 3.10...3.18)
 
+# --- CRITICAL FIX FOR EIGEN/PANGOLIN CONFLICTS ---
+# This must be set BEFORE project() and BEFORE any add_subdirectory
+# It forces submodules (like Eigen) to use OLD behavior (allowing duplicate uninstall targets)
+# even if they reset cmake_minimum_required locally.
+set(CMAKE_POLICY_DEFAULT_CMP0002 OLD)
+
 if(POLICY CMP0002)
   cmake_policy(SET CMP0002 OLD)
 endif()
-set(CMAKE_POLICY_DEFAULT_CMP0002 OLD)
-# ---------------------------------------------------------------
+# -------------------------------------------------
 
 project(basalt)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/" ${CMAKE_MODULE_PATH})
 
-if(NOT EIGEN_ROOT)
-  set(EIGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/basalt-headers/thirdparty/eigen")
+# Attempt to use System Eigen first to avoid compiling the submodule (which causes the conflict)
+find_package(Eigen3 3.4 QUIET)
+if(Eigen3_FOUND)
+  message(STATUS "Found System Eigen version ${Eigen3_VERSION} at ${EIGEN3_INCLUDE_DIR}")
+  # If system eigen is found, we might still need EIGEN_ROOT for some scripts, but 
+  # we hope basalt-headers skips adding the submodule if the target exists.
+else()
+  if(NOT EIGEN_ROOT)
+    set(EIGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/basalt-headers/thirdparty/eigen")
+  endif()
 endif()
 
 string(TOLOWER "${PROJECT_NAME}" PROJECT_NAME_LOWERCASE)
@@ -30,7 +43,10 @@ if(LSB_RELEASE_PROGRAM)
     OUTPUT_VARIABLE LSB_RELEASE_ID_SHORT
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-  if(${LSB_RELEASE_ID_SHORT} EQUAL "22.04")
+  if(${LSB_RELEASE_ID_SHORT} EQUAL "24.04")
+     # Added 24.04 support for ROS2 Jazzy
+     set(DEBIAN_DEPENDS "libtbb12, liblz4-1, libbz2-1.0, libboost-filesystem1.83.0, libboost-date-time1.83.0, libboost-program-options1.83.0, libboost-regex1.83.0, libopencv-dev, libglew2.2, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
+  elseif(${LSB_RELEASE_ID_SHORT} EQUAL "22.04")
     set(DEBIAN_DEPENDS "libtbb12, liblz4-1, libbz2-1.0, libboost-filesystem1.74.0, libboost-date-time1.74.0, libboost-program-options1.74.0, libboost-regex1.74.0, libopencv-dev, libglew2.2, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
 
   elseif(${LSB_RELEASE_ID_SHORT} EQUAL "20.04")
@@ -162,8 +178,9 @@ set(CMAKE_CXX_FLAGS_CIDEBUG  "-O0 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")          
 set(CMAKE_CXX_FLAGS_CIRELWITHDEBINFO "-O3 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")  # CI version with no debug symbols
 
 # base set of compile flags
-# --- FIX: Removed -Werror for GCC 13 compatibility ---
+# --- FIX: Removed -Werror for GCC 13 compatibility (Basalt has many warnings on new compilers) ---
 set(BASALT_CXX_FLAGS "-Wall -Wextra -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
+# ------------------------------------------------------------------------------------------------
 
 # clang-specific compile flags
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
@@ -189,7 +206,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "App
     add_definitions(-DTBB_USE_GLIBCXX_VERSION=${TBB_USE_GLIBCXX_VERSION})
   endif()
 else()
+  # GCC Flags
   set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough")
+  
+  # Add permissive flags for GCC 13+ to avoid failures on strict aliasing/headers
+  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=strict-aliasing -Wno-error=stringop-overflow")
 
   if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9)
       # These are disabled to avoid lot's of warnings in Eigen code with gcc-9
@@ -197,7 +218,6 @@ else()
   endif()
   if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10.0)
     # These are disabled due to warnings in pangolin
-    #set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=parentheses")
     set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-parentheses")
   endif()
 endif()
@@ -317,9 +337,10 @@ set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${BASALT_MARCH_FLAGS} ${BASALT_PASSED_C
 set(EIGEN_INCLUDE_DIR_HINTS ${EIGEN_ROOT})
 find_package(Eigen3 3.4.0 EXACT REQUIRED MODULE)
 message(STATUS "Found Eigen headers in: ${EIGEN3_INCLUDE_DIR}")
-if(NOT EIGEN3_INCLUDE_DIR MATCHES "^${EIGEN_ROOT}")
-  message(WARNING "Found Eigen headers are outside of specified EIGEN_ROOT '${EIGEN_ROOT}'")
-endif()
+# If we used system eigen, EIGEN_ROOT might not match EIGEN3_INCLUDE_DIR, which is fine.
+# if(NOT EIGEN3_INCLUDE_DIR MATCHES "^${EIGEN_ROOT}")
+#   message(WARNING "Found Eigen headers are outside of specified EIGEN_ROOT '${EIGEN_ROOT}'")
+# endif()
 
 find_package(TBB REQUIRED)
 message(STATUS "Found TBB ${TBB_VERSION_MAJOR}.${TBB_VERSION_MINOR} (interface version ${TBB_INTERFACE_VERSION}) headers in: ${TBB_INCLUDE_DIRS}")
@@ -346,12 +367,19 @@ set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON)
+set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON)
 # -----------------------------------------------------------------------
 
 # Set policy to allow duplicate custom targets (for uninstall)
 # Note: we also set CMAKE_POLICY_DEFAULT_CMP0002 at the top of file
 if(POLICY CMP0002)
   cmake_policy(SET CMP0002 OLD)
+endif()
+
+# Dummy check to ensure uninstall exists before submodules if possible, 
+# but rely on CMP0002 OLD to handle duplicates.
+if(NOT TARGET uninstall)
+  add_custom_target(uninstall)
 endif()
 
 add_subdirectory(thirdparty)
