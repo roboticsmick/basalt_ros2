@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.10...3.18)
 
+if(POLICY CMP0002)
+  cmake_policy(SET CMP0002 OLD)
+endif()
+set(CMAKE_POLICY_DEFAULT_CMP0002 OLD)
+# ---------------------------------------------------------------
+
 project(basalt)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/" ${CMAKE_MODULE_PATH})
@@ -156,7 +162,8 @@ set(CMAKE_CXX_FLAGS_CIDEBUG  "-O0 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")          
 set(CMAKE_CXX_FLAGS_CIRELWITHDEBINFO "-O3 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")  # CI version with no debug symbols
 
 # base set of compile flags
-set(BASALT_CXX_FLAGS "-Wall -Wextra -Werror -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
+# --- FIX: Removed -Werror for GCC 13 compatibility ---
+set(BASALT_CXX_FLAGS "-Wall -Wextra -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
 
 # clang-specific compile flags
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
@@ -334,9 +341,15 @@ set_property(TARGET basalt::opencv PROPERTY INTERFACE_LINK_LIBRARIES ${OpenCV_LI
 find_package(fmt REQUIRED)
 message(STATUS "Found {fmt} ${fmt_VERSION} in: ${fmt_DIR}")
 
-# Prevent Eigen from creating duplicate uninstall target
+# --- FIX: Explicitly disable unwanted submodule targets (install/test) ---
 set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
+set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON)
+# -----------------------------------------------------------------------
+
 # Set policy to allow duplicate custom targets (for uninstall)
+# Note: we also set CMAKE_POLICY_DEFAULT_CMP0002 at the top of file
 if(POLICY CMP0002)
   cmake_policy(SET CMP0002 OLD)
 endif()
