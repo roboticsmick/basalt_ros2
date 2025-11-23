@@ -1,30 +1,16 @@
 cmake_minimum_required(VERSION 3.10...3.18)
 
-# --- CRITICAL FIX FOR EIGEN/PANGOLIN CONFLICTS ---
-# This must be set BEFORE project() and BEFORE any add_subdirectory
-# It forces submodules (like Eigen) to use OLD behavior (allowing duplicate uninstall targets)
-# even if they reset cmake_minimum_required locally.
-set(CMAKE_POLICY_DEFAULT_CMP0002 OLD)
-
+# Fix duplicate uninstall target conflict between ament_cmake and Eigen
 if(POLICY CMP0002)
   cmake_policy(SET CMP0002 OLD)
 endif()
-# -------------------------------------------------
 
 project(basalt)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/" ${CMAKE_MODULE_PATH})
 
-# Attempt to use System Eigen first to avoid compiling the submodule (which causes the conflict)
-find_package(Eigen3 3.4 QUIET)
-if(Eigen3_FOUND)
-  message(STATUS "Found System Eigen version ${Eigen3_VERSION} at ${EIGEN3_INCLUDE_DIR}")
-  # If system eigen is found, we might still need EIGEN_ROOT for some scripts, but 
-  # we hope basalt-headers skips adding the submodule if the target exists.
-else()
-  if(NOT EIGEN_ROOT)
-    set(EIGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/basalt-headers/thirdparty/eigen")
-  endif()
+if(NOT EIGEN_ROOT)
+  set(EIGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/basalt-headers/thirdparty/eigen")
 endif()
 
 string(TOLOWER "${PROJECT_NAME}" PROJECT_NAME_LOWERCASE)
@@ -44,17 +30,14 @@ if(LSB_RELEASE_PROGRAM)
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 
   if(${LSB_RELEASE_ID_SHORT} EQUAL "24.04")
-     # Added 24.04 support for ROS2 Jazzy
+     # Added 24.04 support
      set(DEBIAN_DEPENDS "libtbb12, liblz4-1, libbz2-1.0, libboost-filesystem1.83.0, libboost-date-time1.83.0, libboost-program-options1.83.0, libboost-regex1.83.0, libopencv-dev, libglew2.2, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
   elseif(${LSB_RELEASE_ID_SHORT} EQUAL "22.04")
     set(DEBIAN_DEPENDS "libtbb12, liblz4-1, libbz2-1.0, libboost-filesystem1.74.0, libboost-date-time1.74.0, libboost-program-options1.74.0, libboost-regex1.74.0, libopencv-dev, libglew2.2, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
-
   elseif(${LSB_RELEASE_ID_SHORT} EQUAL "20.04")
     set(DEBIAN_DEPENDS "libtbb2, liblz4-1, libbz2-1.0, libboost-filesystem1.71.0, libboost-date-time1.71.0, libboost-program-options1.71.0, libboost-regex1.71.0, libopencv-dev, libglew2.1, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
-
   elseif(${LSB_RELEASE_ID_SHORT} EQUAL "18.04")
     set(DEBIAN_DEPENDS "libtbb2, liblz4-1, libbz2-1.0, libboost-filesystem1.65.1, libboost-date-time1.65.1, libboost-program-options1.65.1, libboost-regex1.65.1, libopencv-dev, libglew2.0, libjpeg8, libpng16-16, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
-
   elseif(${LSB_RELEASE_ID_SHORT} EQUAL "16.04")
     set(DEBIAN_DEPENDS "libtbb2, liblz4-1, libbz2-1.0, libboost-filesystem1.58.0, libboost-date-time1.58.0, libboost-program-options1.58.0, libboost-regex1.58.0, libopencv-dev, libglew1.13, libjpeg8, libpng12-0, libstdc++6, librealsense2, librealsense2-dkms, librealsense2-gl, librealsense2-utils")
   endif()
@@ -138,16 +121,26 @@ if(USE_ROS2)
 
         add_definitions(-DBASALT_USE_ROS2)
 
-        set(ROS2_DEPS
-            rosbag2_cpp
-            rosbag2_storage
-            rosbag2_storage_default_plugins
-            rclcpp
-            sensor_msgs
-            geometry_msgs)
+        # Collect include directories and libraries for ROS2
+        set(ROS2_INCLUDE_DIRS
+            ${rosbag2_cpp_INCLUDE_DIRS}
+            ${rosbag2_storage_INCLUDE_DIRS}
+            ${rosbag2_storage_default_plugins_INCLUDE_DIRS}
+            ${rclcpp_INCLUDE_DIRS}
+            ${sensor_msgs_INCLUDE_DIRS}
+            ${geometry_msgs_INCLUDE_DIRS})
+
+        set(ROS2_LIBRARIES
+            ${rosbag2_cpp_LIBRARIES}
+            ${rosbag2_storage_LIBRARIES}
+            ${rosbag2_storage_default_plugins_LIBRARIES}
+            ${rclcpp_LIBRARIES}
+            ${sensor_msgs_LIBRARIES}
+            ${geometry_msgs_LIBRARIES})
 
         if(rosbag2_compression_FOUND)
-            list(APPEND ROS2_DEPS rosbag2_compression)
+            list(APPEND ROS2_INCLUDE_DIRS ${rosbag2_compression_INCLUDE_DIRS})
+            list(APPEND ROS2_LIBRARIES ${rosbag2_compression_LIBRARIES})
         endif()
 
         message(STATUS "ROS2 support enabled with storage plugins (MCAP, SQLite3)")
@@ -178,9 +171,7 @@ set(CMAKE_CXX_FLAGS_CIDEBUG  "-O0 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")          
 set(CMAKE_CXX_FLAGS_CIRELWITHDEBINFO "-O3 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")  # CI version with no debug symbols
 
 # base set of compile flags
-# --- FIX: Removed -Werror for GCC 13 compatibility (Basalt has many warnings on new compilers) ---
 set(BASALT_CXX_FLAGS "-Wall -Wextra -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
-# ------------------------------------------------------------------------------------------------
 
 # clang-specific compile flags
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
@@ -206,10 +197,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "App
     add_definitions(-DTBB_USE_GLIBCXX_VERSION=${TBB_USE_GLIBCXX_VERSION})
   endif()
 else()
-  # GCC Flags
+  # GCC Flags - added permissive flags for GCC 13+
   set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough")
-  
-  # Add permissive flags for GCC 13+ to avoid failures on strict aliasing/headers
   set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=strict-aliasing -Wno-error=stringop-overflow")
 
   if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9)
@@ -225,12 +214,6 @@ endif()
 
 # Set platform / compiler specific compile flags and checks
 if(APPLE)
-  # Need to investigate how to reliably detect and use OpenMP on macOS...
-#  set(USE_OPENMP_DEFAULT OFF)
-
-  # Among others, setting CMAKE_FIND_FRAMEWORK to LAST fixed issues
-  # with installed Mono that contains old headers (libpng, ...).
-  # See: https://github.com/openMVG/openMVG/issues/1349#issuecomment-401492811
   set(CMAKE_FIND_FRAMEWORK LAST)
 
   if(CMAKE_SYSTEM_VERSION VERSION_LESS 19.0.0)
@@ -238,43 +221,28 @@ if(APPLE)
       include_directories("/usr/local/opt/llvm/include/c++/v1")
       link_directories("/usr/local/opt/llvm/lib")
       add_compile_options("-nostdinc++")
-      #set(STD_CXX_FS c++fs)
-
-      # Workaround for cmake not to filter the manually added standard include path
-      # See: https://gitlab.kitware.com/cmake/cmake/issues/19227#note_669894
       list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "/usr/local/opt/llvm/include/c++/v1")
   endif()
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(STATUS "Detected macOS with non-Apple clang")
-
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     message(STATUS "Detected macOS with Apple clang")
-    # Apple clang on macOS < 10.14 Mojave is too old
     if(CMAKE_SYSTEM_VERSION VERSION_LESS 18.0.0)
       message(WARNING "Detected Darwin version ${CMAKE_SYSTEM_VERSION}, which is earlier than macos 10.14 Mojave. Apple clang is too old and not supported. Use clang from homebrew.")
     endif()
-
   else()
     message(WARNING "Detected macOS with unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
   endif()
 
 elseif(UNIX)
-#  set(USE_OPENMP_DEFAULT ON)
-
   # assume libstdc++
   set(STD_CXX_FS stdc++fs)
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(STATUS "Detected Linux with clang.")
-
-    # Note: Whatever the issue was, this seems to not be an issue any more, at least with more recent clang and Ubuntu versions (tested clang-12 and Ubuntu 18.04)
-    #message(WARNING "Clang on Linux is currently not fully supported. You'll likely need to get a recent version of TBB.")
-    #set(LINUX_CLANG 1)
-
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(STATUS "Detected Linux with gcc.")
-
   else()
     message(WARNING "Detected Linux with unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
   endif()
@@ -285,40 +253,9 @@ endif()
 
 
 # OpenMP option and compile flags
-#
-# Note: OpenMP and TBB don't mix well, so we disable Eigen's parallelization.
-# It's trying to paralellize matrix products during SC, which we run in a parallel_reduce using TBB.
-# Turns out using OpenMP can slow down the computby factor 10-100x! So for now we discable it completely.
-# One place where Eigen's parallelization could still have been useful is the CG solver in the mapper.
-# We could in the future investiagte other implementations (paralellized with TBB) or selectively enabling
-# Eigen's parallelization just for CG, setting number of threads to 1 everywhere else.
-# Another way to ensure Eigen doesn't use OpenMP regardless of how it was built is setting the environment
-# variable OMP_NUM_THREADS=1 beofre running the application.
-#
-# See: https://eigen.tuxfamily.org/dox/TopicMultiThreading.html
-#
-# If we enable BLAS / LAPACK either directly or via thirdparty libs like ceres,
-# make sure to disable OpenMP for the linked BLAS library. In particular on Ubuntu it seems OpenBLAS is often installed,
-# and it can have similar issues in multithreaded applications if it's own parallelization with OpenMP is enabled.
-# You can set the environment varaibles OPENBLAS_NUM_THREADS=1 or OMP_NUM_THREADS=1. This is also mentioned in the ceres
-# installation documentation.
-#
-# See also: https://github.com/xianyi/OpenBLAS/wiki/faq#multi-threaded
-#
-# Set EIGEN_DONT_PARALLELIZE to be sure it doesn't use openmp,
-# just in case some dependency enables openmp without us noticing.
 set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -DEIGEN_DONT_PARALLELIZE")
 
-#option(USE_OPENMP "Use OpenMP (e.g. for parallel computation in Eigen)" ${USE_OPENMP_DEFAULT})
-#if(USE_OPENMP)
-#  message(STATUS "OpenMP Enabled")
-#  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -fopenmp")
-#else()
-#  message(STATUS "OpenMP Disabled")
-#endif()
-
 # Make specialization for double / float optional.
-# Disabling them can be useful for better compile times during development.
 option(BASALT_INSTANTIATIONS_DOUBLE "Instatiate templates for Scalar=double." ON)
 option(BASALT_INSTANTIATIONS_FLOAT "Instatiate templates for Scalar=float." ON)
 
@@ -337,10 +274,9 @@ set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${BASALT_MARCH_FLAGS} ${BASALT_PASSED_C
 set(EIGEN_INCLUDE_DIR_HINTS ${EIGEN_ROOT})
 find_package(Eigen3 3.4.0 EXACT REQUIRED MODULE)
 message(STATUS "Found Eigen headers in: ${EIGEN3_INCLUDE_DIR}")
-# If we used system eigen, EIGEN_ROOT might not match EIGEN3_INCLUDE_DIR, which is fine.
-# if(NOT EIGEN3_INCLUDE_DIR MATCHES "^${EIGEN_ROOT}")
-#   message(WARNING "Found Eigen headers are outside of specified EIGEN_ROOT '${EIGEN_ROOT}'")
-# endif()
+if(NOT EIGEN3_INCLUDE_DIR MATCHES "^${EIGEN_ROOT}")
+  message(WARNING "Found Eigen headers are outside of specified EIGEN_ROOT '${EIGEN_ROOT}'")
+endif()
 
 find_package(TBB REQUIRED)
 message(STATUS "Found TBB ${TBB_VERSION_MAJOR}.${TBB_VERSION_MINOR} (interface version ${TBB_INTERFACE_VERSION}) headers in: ${TBB_INCLUDE_DIRS}")
@@ -362,25 +298,13 @@ set_property(TARGET basalt::opencv PROPERTY INTERFACE_LINK_LIBRARIES ${OpenCV_LI
 find_package(fmt REQUIRED)
 message(STATUS "Found {fmt} ${fmt_VERSION} in: ${fmt_DIR}")
 
-# --- FIX: Explicitly disable unwanted submodule targets (install/test) ---
+# --- FIX: Disable submodule build artifacts to prevent conflict ---
 set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(EIGEN_BUILD_UNINSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON)
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON)
-# -----------------------------------------------------------------------
-
-# Set policy to allow duplicate custom targets (for uninstall)
-# Note: we also set CMAKE_POLICY_DEFAULT_CMP0002 at the top of file
-if(POLICY CMP0002)
-  cmake_policy(SET CMP0002 OLD)
-endif()
-
-# Dummy check to ensure uninstall exists before submodules if possible, 
-# but rely on CMP0002 OLD to handle duplicates.
-if(NOT TARGET uninstall)
-  add_custom_target(uninstall)
-endif()
 
 add_subdirectory(thirdparty)
 
@@ -396,8 +320,6 @@ set_property(TARGET basalt::magic_enum PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${
 add_library(basalt SHARED)
 
 # List all header and source files with target_sources.
-# This ensures, e.g., that QtCreator >= 6.0 properly recognize these headers to belong to the project.
-# To support cmake < 3.13, use absolute paths (see: https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/)
 target_sources(basalt
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/aprilgrid.h
@@ -502,7 +424,8 @@ target_link_libraries(basalt
 
 # Add ROS2 libraries if enabled
 if(USE_ROS2)
-    target_link_libraries(basalt PRIVATE ${ROS2_DEPS})
+    target_include_directories(basalt PRIVATE ${ROS2_INCLUDE_DIRS})
+    target_link_libraries(basalt PRIVATE ${ROS2_LIBRARIES})
 endif()
 
 target_include_directories(basalt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -1,18 +1,21 @@
-[![pipeline status](https://gitlab.com/VladyslavUsenko/basalt/badges/master/pipeline.svg)](https://gitlab.com/VladyslavUsenko/basalt/commits/master)
+## Basalt ROS2
 
-## Basalt
-For more information see https://vision.in.tum.de/research/vslam/basalt
+**ROS2 Port of Basalt VIO** - Calibration and Visual-Inertial Odometry for ROS2
+
+This is a ROS2-compatible fork of the original [Basalt project](https://gitlab.com/VladyslavUsenko/basalt) by Vladyslav Usenko.
+For more information about the original project, see https://vision.in.tum.de/research/vslam/basalt
 
 ![teaser](doc/img/teaser.png)
 
+### Features
 This project contains tools for:
-* Camera, IMU and motion capture calibration.
-* Visual-inertial odometry and mapping.
-* Simulated environment to test different components of the system.
+* **Camera, IMU and motion capture calibration** using ROS2 bag files (MCAP/SQLite3 format)
+* Visual-inertial odometry and mapping
+* Support for ROS2 Jazzy (Ubuntu 24.04)
+* Compatible with modern camera systems (tested with DepthAI v3)
 
-Some reusable components of the system are available as a separate [header-only library](https://gitlab.com/VladyslavUsenko/basalt-headers) ([Documentation](https://vladyslavusenko.gitlab.io/basalt-headers/)).
-
-There is also a [Github mirror](https://github.com/VladyslavUsenko/basalt-mirror) of this project to enable easy forking.
+### Original Project
+The original Basalt project provides a [header-only library](https://gitlab.com/VladyslavUsenko/basalt-headers) ([Documentation](https://vladyslavusenko.gitlab.io/basalt-headers/)) and supports multiple datasets including TUM-VI, EuRoC, and KITTI.
 
 ## Related Publications
 Visual-Inertial Odometry and Mapping:
@@ -32,27 +35,60 @@ Optimization (describes square-root optimization and marginalization used in VIO
 
 
 ## Installation
-### APT installation for Ubuntu 22.04, 20.04 and 18.04 (Fast)
-Set up keys, add the repository to the sources list, update the Ubuntu package index and install Basalt:
-```
-sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 0AD9A3000D97B6C9
-sudo sh -c 'echo "deb [arch=amd64] http://packages.usenko.net/ubuntu $(lsb_release -sc) $(lsb_release -sc)/main" > /etc/apt/sources.list.d/basalt.list'
-sudo apt-get update
-sudo apt-get dist-upgrade
-sudo apt-get install basalt
+
+### Prerequisites
+- **Ubuntu 24.04 (recommended)** or Ubuntu 22.04
+- **ROS2 Jazzy** (for Ubuntu 24.04) or ROS2 Humble (for Ubuntu 22.04)
+- GCC 13+ / Clang 15+
+
+### ROS2 Installation
+First, install ROS2 Jazzy following the [official instructions](https://docs.ros.org/en/jazzy/Installation.html).
+
+For Ubuntu 24.04:
+```bash
+sudo apt update && sudo apt install -y ros-jazzy-desktop
 ```
 
-### Source installation for Ubuntu >= 18.04 and MacOS >= 10.14 Mojave
-Clone the source code for the project and build it. For MacOS you should have [Homebrew](https://brew.sh/) installed.
+### Build from Source
+
+1. **Install system dependencies:**
+```bash
+sudo apt update
+sudo apt install -y \
+    build-essential cmake git \
+    libeigen3-dev libtbb-dev libopencv-dev \
+    libfmt-dev libglew-dev libboost-all-dev \
+    libjpeg-dev libpng-dev libtiff-dev
 ```
-git clone --recursive https://gitlab.com/VladyslavUsenko/basalt.git
-cd basalt
-./scripts/install_deps.sh
-mkdir build
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo
-make -j8
+
+2. **Clone this repository:**
+```bash
+git clone --recursive https://github.com/roboticsmick/basalt_ros2.git
+cd basalt_ros2
 ```
+
+3. **Build the project:**
+```bash
+# Source ROS2 environment
+source /opt/ros/jazzy/setup.bash
+
+# Create build directory and build
+rm -rf build && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_ROS2=ON -DUSE_ROS1=OFF
+make -j$(nproc)
+```
+
+4. **Built executables will be in the `build/` directory:**
+   - `basalt_calibrate` - Camera calibration
+   - `basalt_calibrate_imu` - Camera-IMU calibration
+   - `basalt_vio` - Visual-Inertial Odometry
+   - `basalt_mapper` - Mapping tool
+
+### Installation Notes
+- This ROS2 port **does not** use APT packages - build from source only
+- The build has been tested with **GCC 13.3** on Ubuntu 24.04
+- Submodule fixes for Pangolin and Eigen are included for GCC 13+ compatibility
+- ROS2 Jazzy MCAP and SQLite3 bag formats are fully supported
 
 ## Usage
 * [Camera, IMU and Mocap calibration. (TUM-VI, Euroc, UZH-FPV and Kalibr datasets)](doc/Calibration.md)

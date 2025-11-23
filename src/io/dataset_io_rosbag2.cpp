@@ -40,7 +40,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <limits>
 #include <set>
 
+#include <rmw/types.h>
+
 namespace basalt {
+
+// Helper function to convert rcutils_uint8_array_t to rclcpp::SerializedMessage
+static rclcpp::SerializedMessage createSerializedMessage(
+    const std::shared_ptr<rcutils_uint8_array_t>& uint8_array) {
+  rcl_serialized_message_t rcl_msg = rmw_get_zero_initialized_serialized_message();
+  rcl_msg.buffer_capacity = uint8_array->buffer_capacity;
+  rcl_msg.buffer_length = uint8_array->buffer_length;
+  rcl_msg.buffer = uint8_array->buffer;
+  rcl_msg.allocator = uint8_array->allocator;
+
+  return rclcpp::SerializedMessage(rcl_msg);
+}
 
 void Rosbag2IO::read(const std::string& path) {
   if (!fs::exists(path)) {
@@ -203,8 +217,9 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
     // Process camera images (lazy load - store serialized message)
     if (cam_topics.find(topic) != cam_topics.end()) {
       // Deserialize header to get timestamp
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
       auto img_msg =
-          deserializeMessage<sensor_msgs::msg::Image>(*bag_message->serialized_data);
+          deserializeMessage<sensor_msgs::msg::Image>(serialized_msg);
 
       if (img_msg) {
         int64_t timestamp_ns =
@@ -219,7 +234,7 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
         img_vec[topic_to_id.at(topic)] =
             Rosbag2VioDataset::SerializedMessageData{
                 std::make_shared<rclcpp::SerializedMessage>(
-                    *bag_message->serialized_data),
+                    createSerializedMessage(bag_message->serialized_data)),
                 "sensor_msgs/msg/Image"};
 
         image_timestamps_set.insert(timestamp_ns);
@@ -230,8 +245,8 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
 
     // Process IMU data (extract immediately)
     else if (topic == imu_topic) {
-      auto imu_msg = deserializeMessage<sensor_msgs::msg::Imu>(
-          *bag_message->serialized_data);
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      auto imu_msg = deserializeMessage<sensor_msgs::msg::Imu>(serialized_msg);
 
       if (imu_msg) {
         int64_t time = rclcpp::Time(imu_msg->header.stamp).nanoseconds();
@@ -253,28 +268,27 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
         max_time = std::max(max_time, time);
 
         // Track time offset
-        int64_t msg_arrival_time = bag_message->time_stamp;
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
         system_to_imu_offset_vec.push_back(time - msg_arrival_time);
       }
     }
 
     // Process mocap data
     else if (topic == mocap_topic) {
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
       // Try TransformStamped first
       auto transform_msg =
-          deserializeMessage<geometry_msgs::msg::TransformStamped>(
-              *bag_message->serialized_data);
+          deserializeMessage<geometry_msgs::msg::TransformStamped>(serialized_msg);
 
       if (transform_msg) {
         mocap_msgs.push_back(transform_msg);
         int64_t time =
             rclcpp::Time(transform_msg->header.stamp).nanoseconds();
-        int64_t msg_arrival_time = bag_message->time_stamp;
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
         system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
       } else {
         // Try PoseStamped
-        auto pose_msg = deserializeMessage<geometry_msgs::msg::PoseStamped>(
-            *bag_message->serialized_data);
+        auto pose_msg = deserializeMessage<geometry_msgs::msg::PoseStamped>(serialized_msg);
 
         if (pose_msg) {
           // Convert PoseStamped to TransformStamped
@@ -288,7 +302,7 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
 
           mocap_msgs.push_back(transform_msg);
           int64_t time = rclcpp::Time(pose_msg->header.stamp).nanoseconds();
-          int64_t msg_arrival_time = bag_message->time_stamp;
+          int64_t msg_arrival_time = bag_message->recv_timestamp;
           system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
         }
       }
@@ -296,13 +310,13 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
 
     // Process point data
     else if (topic == point_topic) {
-      auto point_msg = deserializeMessage<geometry_msgs::msg::PointStamped>(
-          *bag_message->serialized_data);
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      auto point_msg = deserializeMessage<geometry_msgs::msg::PointStamped>(serialized_msg);
 
       if (point_msg) {
         point_msgs.push_back(point_msg);
         int64_t time = rclcpp::Time(point_msg->header.stamp).nanoseconds();
-        int64_t msg_arrival_time = bag_message->time_stamp;
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
         system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
       }
     }

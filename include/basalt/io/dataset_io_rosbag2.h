@@ -48,6 +48,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rosbag2_storage/storage_options.hpp>
 
 #include <rclcpp/serialization.hpp>
+#include <rclcpp/serialized_message.hpp>
 #include <rclcpp/time.hpp>
 
 #include <geometry_msgs/msg/point_stamped.hpp>
