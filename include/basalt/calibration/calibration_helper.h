@@ -40,6 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/calibration/calibration.hpp>
 
 #include <tbb/concurrent_unordered_map.h>
+#include <unordered_map>
 
 namespace basalt {
 
@@ -71,9 +72,10 @@ struct CalibInitPoseData {
 using CalibCornerMap = tbb::concurrent_unordered_map<TimeCamId, CalibCornerData,
                                                      std::hash<TimeCamId>>;
 
+// Using std::unordered_map instead of tbb::concurrent_unordered_map
+// to avoid alignment issues with Eigen types in CalibInitPoseData
 using CalibInitPoseMap =
-    tbb::concurrent_unordered_map<TimeCamId, CalibInitPoseData,
-                                  std::hash<TimeCamId>>;
+    std::unordered_map<TimeCamId, CalibInitPoseData, std::hash<TimeCamId>>;
 
 class CalibHelper {
  public:

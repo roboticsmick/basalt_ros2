@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/io/dataset_io_rosbag2.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -192,9 +193,13 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
   // Create topic to camera ID mapping
   std::map<std::string, int> topic_to_id;
   int idx = 0;
+  std::cout << "\n=== Camera Topic Mapping ===" << std::endl;
   for (const std::string& topic : cam_topics) {
-    topic_to_id[topic] = idx++;
+    topic_to_id[topic] = idx;
+    std::cout << "  Camera " << idx << ": " << topic << std::endl;
+    idx++;
   }
+  std::cout << "===========================\n" << std::endl;
 
   int64_t min_time = std::numeric_limits<int64_t>::max();
   int64_t max_time = std::numeric_limits<int64_t>::min();
@@ -206,6 +211,22 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
   std::vector<int64_t> system_to_mocap_offset_vec;
 
   std::set<int64_t> image_timestamps_set;
+
+  // Timestamp synchronization tolerance (5ms = 5,000,000 ns)
+  // Images within this tolerance will be grouped together
+  const int64_t SYNC_TOLERANCE_NS = 5000000;
+
+  // Helper to find or create synchronized timestamp
+  auto findSyncTimestamp = [&](int64_t timestamp_ns) -> int64_t {
+    // Look for an existing timestamp within tolerance
+    auto it = image_timestamps_set.lower_bound(timestamp_ns - SYNC_TOLERANCE_NS);
+    if (it != image_timestamps_set.end() &&
+        std::abs(*it - timestamp_ns) <= SYNC_TOLERANCE_NS) {
+      return *it;  // Use existing synchronized timestamp
+    }
+    // No existing timestamp found, this becomes a new sync point
+    return timestamp_ns;
+  };
 
   int num_msgs = 0;
 
@@ -222,11 +243,14 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
           deserializeMessage<sensor_msgs::msg::Image>(serialized_msg);
 
       if (img_msg) {
-        int64_t timestamp_ns =
+        int64_t raw_timestamp_ns =
             rclcpp::Time(img_msg->header.stamp).nanoseconds();
 
+        // Find or create synchronized timestamp (group images within tolerance)
+        int64_t sync_timestamp_ns = findSyncTimestamp(raw_timestamp_ns);
+
         // Store serialized message for lazy loading
-        auto& img_vec = data->image_data_idx[timestamp_ns];
+        auto& img_vec = data->image_data_idx[sync_timestamp_ns];
         if (img_vec.size() == 0) {
           img_vec.resize(data->num_cams);
         }
@@ -237,9 +261,9 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
                     createSerializedMessage(bag_message->serialized_data)),
                 "sensor_msgs/msg/Image"};
 
-        image_timestamps_set.insert(timestamp_ns);
-        min_time = std::min(min_time, timestamp_ns);
-        max_time = std::max(max_time, timestamp_ns);
+        image_timestamps_set.insert(sync_timestamp_ns);
+        min_time = std::min(min_time, raw_timestamp_ns);
+        max_time = std::max(max_time, raw_timestamp_ns);
       }
     }
 
@@ -327,6 +351,22 @@ void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
   // Convert image timestamps set to vector
   data->image_timestamps.assign(image_timestamps_set.begin(),
                                 image_timestamps_set.end());
+
+  // Count how many frames have all cameras synchronized
+  size_t fully_synced_frames = 0;
+  for (const auto& kv : data->image_data_idx) {
+    bool all_cams_present = true;
+    for (const auto& opt : kv.second) {
+      if (!opt.has_value()) {
+        all_cams_present = false;
+        break;
+      }
+    }
+    if (all_cams_present) fully_synced_frames++;
+  }
+  std::cout << "Synchronized frames (all " << data->num_cams << " cameras): "
+            << fully_synced_frames << "/" << data->image_timestamps.size()
+            << " (tolerance: " << SYNC_TOLERANCE_NS / 1000000.0 << "ms)" << std::endl;
 
   // Calculate mocap-to-IMU offset (median)
   if (!system_to_mocap_offset_vec.empty() &&
@@ -448,8 +488,51 @@ std::vector<ImageData> Rosbag2VioDataset::get_image_data(int64_t t_ns) {
 
     } else if (img_msg->encoding == "mono16") {
       std::memcpy(id.img->ptr, img_msg->data.data(), img_msg->data.size());
+
+    } else if (img_msg->encoding == "bgr8" || img_msg->encoding == "rgb8") {
+      // Convert BGR8/RGB8 to grayscale using luminosity method
+      // Y = 0.299*R + 0.587*G + 0.114*B
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      bool is_bgr = (img_msg->encoding == "bgr8");
+      size_t num_pixels = img_msg->width * img_msg->height;
+
+      for (size_t j = 0; j < num_pixels; j++) {
+        size_t idx = j * 3;
+        uint8_t b = data_in[idx + (is_bgr ? 0 : 2)];
+        uint8_t g = data_in[idx + 1];
+        uint8_t r = data_in[idx + (is_bgr ? 2 : 0)];
+
+        // Convert to grayscale using standard luminosity formula
+        int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+        data_out[j] = gray << 8;  // Scale to 16-bit
+      }
+
+    } else if (img_msg->encoding == "bgra8" || img_msg->encoding == "rgba8") {
+      // Convert BGRA8/RGBA8 to grayscale (ignore alpha channel)
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      bool is_bgr = (img_msg->encoding == "bgra8");
+      size_t num_pixels = img_msg->width * img_msg->height;
+
+      for (size_t j = 0; j < num_pixels; j++) {
+        size_t idx = j * 4;
+        uint8_t b = data_in[idx + (is_bgr ? 0 : 2)];
+        uint8_t g = data_in[idx + 1];
+        uint8_t r = data_in[idx + (is_bgr ? 2 : 0)];
+        // Alpha channel at idx+3 is ignored
+
+        // Convert to grayscale using standard luminosity formula
+        int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+        data_out[j] = gray << 8;  // Scale to 16-bit
+      }
+
     } else {
       std::cerr << "Encoding " << img_msg->encoding << " is not supported."
+                << std::endl;
+      std::cerr << "Supported encodings: mono8, mono16, bgr8, rgb8, bgra8, rgba8"
                 << std::endl;
       std::abort();
     }

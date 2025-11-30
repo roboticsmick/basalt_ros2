@@ -445,11 +445,35 @@ void CamCalib::initCamIntrinsics() {
     return;
   }
 
-  std::cout << "Started camera intrinsics initialization" << std::endl;
+  std::cout << "\n=== Started camera intrinsics initialization ===" << std::endl;
+  std::cout << "Number of cameras: " << vio_dataset->get_num_cams() << std::endl;
+  std::cout << "Number of camera types specified: " << cam_types.size() << std::endl;
+  std::cout << "Camera models: ";
+  for (size_t i = 0; i < cam_types.size(); i++) {
+    std::cout << cam_types[i] << " ";
+  }
+  std::cout << std::endl;
+
+  std::cout << "Total corner detections across all cameras: " << calib_corners.size() << std::endl;
+
+  // Count detections per camera
+  std::vector<int> corners_per_cam(vio_dataset->get_num_cams(), 0);
+  for (const auto& kv : calib_corners) {
+    size_t cam_id = kv.first.cam_id;
+    if (cam_id < corners_per_cam.size()) {
+      corners_per_cam[cam_id]++;
+    }
+  }
+
+  for (size_t i = 0; i < corners_per_cam.size(); i++) {
+    std::cout << "  Camera " << i << ": " << corners_per_cam[i] << " detections" << std::endl;
+  }
 
   if (!calib_opt) calib_opt.reset(new PosesOptimization);
 
+  std::cout << "Calling resetCalib..." << std::endl;
   calib_opt->resetCalib(vio_dataset->get_num_cams(), cam_types);
+  std::cout << "resetCalib completed successfully" << std::endl;
 
   std::vector<bool> cam_initialized(vio_dataset->get_num_cams(), false);
 
@@ -457,16 +481,36 @@ void CamCalib::initCamIntrinsics() {
   if (vio_dataset->get_image_timestamps().size() > 100) inc = 3;
 
   for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
+    std::cout << "\n--- Initializing camera " << j << " (model: " << cam_types[j] << ") ---" << std::endl;
+
+    size_t null_image_count = 0;
+    size_t frames_checked = 0;
+
     for (size_t i = 0; i < vio_dataset->get_image_timestamps().size();
          i += inc) {
       const int64_t timestamp_ns = vio_dataset->get_image_timestamps()[i];
       const std::vector<basalt::ImageData> &img_vec =
           vio_dataset->get_image_data(timestamp_ns);
+      frames_checked++;
+
+      // Validate image data
+      if (j >= img_vec.size()) {
+        null_image_count++;
+        continue;
+      }
+
+      if (!img_vec[j].img) {
+        null_image_count++;
+        continue;
+      }
 
       TimeCamId tcid(timestamp_ns, j);
 
       if (calib_corners.find(tcid) != calib_corners.end()) {
         CalibCornerData cid = calib_corners.at(tcid);
+
+        std::cout << "  Found " << cid.corners.size() << " corners at frame " << i
+                  << " (image size: " << img_vec[j].img->w << "x" << img_vec[j].img->h << ")" << std::endl;
 
         Eigen::Vector4d init_intr;
 
@@ -476,25 +520,52 @@ void CamCalib::initCamIntrinsics() {
 
         if (success) {
           cam_initialized[j] = true;
+          std::cout << "  ✓ Camera " << j << " initialized with intrinsics: ["
+                    << init_intr.transpose() << "]" << std::endl;
           calib_opt->calib->intrinsics[j].setFromInit(init_intr);
           break;
+        } else {
+          std::cout << "  × Initialization failed for this frame, trying next..." << std::endl;
         }
       }
+    }
+
+    if (!cam_initialized[j]) {
+      std::cout << "  ⚠ Camera " << j << " not initialized yet, will try pinhole fallback" << std::endl;
+    }
+
+    if (null_image_count > 0) {
+      std::cout << "  (Skipped " << null_image_count << "/" << frames_checked
+                << " frames without images for this camera)" << std::endl;
     }
   }
 
   // Try perfect pinhole initialization for cameras that are not initalized.
+  std::cout << "\n=== Pinhole fallback initialization ===" << std::endl;
   for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
     if (!cam_initialized[j]) {
+      std::cout << "Trying pinhole initialization for camera " << j << std::endl;
       std::vector<CalibCornerData *> pinhole_corners;
       int w = 0;
       int h = 0;
+      size_t null_count = 0;
 
       for (size_t i = 0; i < vio_dataset->get_image_timestamps().size();
            i += inc) {
         const int64_t timestamp_ns = vio_dataset->get_image_timestamps()[i];
         const std::vector<basalt::ImageData> &img_vec =
             vio_dataset->get_image_data(timestamp_ns);
+
+        // Validate before accessing
+        if (j >= img_vec.size()) {
+          null_count++;
+          continue;
+        }
+
+        if (!img_vec[j].img) {
+          null_count++;
+          continue;
+        }
 
         TimeCamId tcid(timestamp_ns, j);
 
@@ -507,6 +578,17 @@ void CamCalib::initCamIntrinsics() {
 
         w = img_vec[j].img->w;
         h = img_vec[j].img->h;
+      }
+
+      std::cout << "  Pinhole corners collected: " << pinhole_corners.size()
+                << " (image: " << w << "x" << h << ")"
+                << " [skipped " << null_count << " null frames]" << std::endl;
+
+      if (w <= 0 || h <= 0) {
+        std::cerr << "ERROR: Invalid image dimensions for camera " << j
+                  << ": " << w << "x" << h << std::endl;
+        std::cerr << "This means no valid images were loaded for this camera!" << std::endl;
+        continue;
       }
 
       BASALT_ASSERT(w > 0 && h > 0);
@@ -587,11 +669,42 @@ void CamCalib::initCamPoses() {
     processing_thread.reset();
   }
 
-  std::cout << "Started initial camera pose computation " << std::endl;
+  std::cout << "\n=== Started initial camera pose computation ===" << std::endl;
 
-  CalibHelper::initCamPoses(calib_opt->calib,
-                            april_grid.aprilgrid_corner_pos_3d,
-                            this->calib_corners, this->calib_init_poses);
+  // Validate all cameras are initialized
+  std::cout << "Checking camera initialization status:" << std::endl;
+  bool all_cameras_initialized = true;
+  for (size_t i = 0; i < calib_opt->calib->intrinsics.size(); i++) {
+    // Check if intrinsics are valid (non-zero focal length)
+    const auto& intr = calib_opt->calib->intrinsics[i];
+    bool is_valid = (intr.getParam()[0] > 0 && intr.getParam()[1] > 0);
+    std::cout << "  Camera " << i << ": " << (is_valid ? "✓ VALID" : "✗ NOT INITIALIZED")
+              << " (fx=" << intr.getParam()[0] << ", fy=" << intr.getParam()[1] << ")" << std::endl;
+    if (!is_valid) {
+      all_cameras_initialized = false;
+    }
+  }
+
+  if (!all_cameras_initialized) {
+    std::cerr << "\nERROR: Not all cameras were initialized!" << std::endl;
+    std::cerr << "This usually means:" << std::endl;
+    std::cerr << "  1. Not enough AprilGrid detections for some cameras" << std::endl;
+    std::cerr << "  2. Camera model mismatch (try 'kb4' instead of 'ds')" << std::endl;
+    std::cerr << "  3. AprilGrid dimensions are incorrect" << std::endl;
+    std::cerr << "\nTip: Camera 0 (/colour/image_raw) failed - try '--cam-types kb4 ds ds' instead" << std::endl;
+    return;
+  }
+
+  std::cout << "All cameras initialized successfully, computing poses..." << std::endl;
+
+  try {
+    CalibHelper::initCamPoses(calib_opt->calib,
+                              april_grid.aprilgrid_corner_pos_3d,
+                              this->calib_corners, this->calib_init_poses);
+  } catch (const std::exception& e) {
+    std::cerr << "ERROR during pose computation: " << e.what() << std::endl;
+    return;
+  }
 
   std::string path = cache_path + cache_dataset_name + "_init_poses.cereal";
   std::ofstream os(path, std::ios::binary);

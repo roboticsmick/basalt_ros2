@@ -38,6 +38,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/utils/apriltag.h>
 
 #include <tbb/parallel_for.h>
+#include <tbb/global_control.h>
+#include <atomic>
+#include <thread>
 
 #include <opengv/absolute_pose/CentralAbsoluteAdapter.hpp>
 #include <opengv/absolute_pose/methods.hpp>
@@ -64,10 +67,28 @@ bool estimateTransformation(
     const std::vector<int> &corner_ids,
     const Eigen::aligned_vector<Eigen::Vector4d> &aprilgrid_corner_pos_3d,
     Sophus::SE3d &T_target_camera, size_t &num_inliers) {
+  // Validate inputs
+  if (corners.size() != corner_ids.size()) {
+    std::cerr << "ERROR: corners.size() (" << corners.size()
+              << ") != corner_ids.size() (" << corner_ids.size() << ")" << std::endl;
+    return false;
+  }
+
+  if (corners.empty()) {
+    return false;
+  }
+
   opengv::bearingVectors_t bearingVectors;
   opengv::points_t points;
 
   for (size_t i = 0; i < corners.size(); i++) {
+    // Validate corner_id bounds
+    if (corner_ids[i] < 0 || static_cast<size_t>(corner_ids[i]) >= aprilgrid_corner_pos_3d.size()) {
+      std::cerr << "ERROR: corner_id " << corner_ids[i] << " out of bounds (max: "
+                << aprilgrid_corner_pos_3d.size() << ")" << std::endl;
+      continue;
+    }
+
     Eigen::Vector4d tmp;
     if (!cam_calib.unproject(corners[i], tmp)) {
       continue;
@@ -78,6 +99,10 @@ bool estimateTransformation(
 
     bearingVectors.push_back(bearing);
     points.push_back(point);
+  }
+
+  if (bearingVectors.size() < 8) {
+    return false;
   }
 
   opengv::absolute_pose::CentralAbsoluteAdapter adapter(bearingVectors, points);
@@ -91,6 +116,13 @@ bool estimateTransformation(
               adapter, opengv::sac_problems::absolute_pose::
                            AbsolutePoseSacProblem::KNEIP));
   ransac.sac_model_ = absposeproblem_ptr;
+
+  // Validate focal length parameter
+  if (cam_calib.getParam()[0] <= 0) {
+    std::cerr << "ERROR: Invalid focal length: " << cam_calib.getParam()[0] << std::endl;
+    return false;
+  }
+
   ransac.threshold_ = 1.0 - cos(atan(sqrt(2.0) * 1 / cam_calib.getParam()[0]));
   ransac.max_iterations_ = 50;
 
@@ -112,6 +144,14 @@ void CalibHelper::detectCorners(const VioDatasetPtr &vio_data,
   calib_corners.clear();
   calib_corners_rejected.clear();
 
+  // Limit TBB to use half the available cores to prevent system overload
+  unsigned int num_threads = std::max(1u, std::thread::hardware_concurrency() / 2);
+  tbb::global_control gc(tbb::global_control::max_allowed_parallelism, num_threads);
+  std::cout << "Detecting corners using " << num_threads << " threads..." << std::endl;
+
+  size_t total_frames = vio_data->get_image_timestamps().size();
+  std::atomic<size_t> processed_frames{0};
+
   tbb::parallel_for(
       tbb::blocked_range<size_t>(0, vio_data->get_image_timestamps().size()),
       [&](const tbb::blocked_range<size_t> &r) {
@@ -131,22 +171,24 @@ void CalibHelper::detectCorners(const VioDatasetPtr &vio_data,
                             ccd_good.corner_ids, ccd_good.radii,
                             ccd_bad.corners, ccd_bad.corner_ids, ccd_bad.radii);
 
-              //                std::cout << "image (" << timestamp_ns << ","
-              //                << i
-              //                          << ")  detected " <<
-              //                          ccd_good.corners.size()
-              //                          << "corners (" <<
-              //                          ccd_bad.corners.size()
-              //                          << " rejected)" << std::endl;
-
               TimeCamId tcid(timestamp_ns, i);
 
               calib_corners.emplace(tcid, ccd_good);
               calib_corners_rejected.emplace(tcid, ccd_bad);
             }
           }
+
+          // Progress update
+          size_t done = ++processed_frames;
+          if (done % 100 == 0 || done == total_frames) {
+            std::cout << "\r  Progress: " << done << "/" << total_frames
+                      << " (" << (100 * done / total_frames) << "%)" << std::flush;
+          }
         }
       });
+
+  std::cout << std::endl;  // New line after progress
+  std::cout << "  Detected corners in " << calib_corners.size() << " images" << std::endl;
 }
 
 void CalibHelper::initCamPoses(
@@ -161,20 +203,34 @@ void CalibHelper::initCamPoses(
     corners.emplace_back(kv.first);
   }
 
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, corners.size()),
-                    [&](const tbb::blocked_range<size_t> &r) {
-                      for (size_t j = r.begin(); j != r.end(); ++j) {
-                        TimeCamId tcid = corners[j];
-                        const CalibCornerData &ccd = calib_corners.at(tcid);
+  std::cout << "Computing initial poses for " << corners.size() << " frames..." << std::endl;
 
-                        CalibInitPoseData cp;
+  // Sequential processing (CalibInitPoseMap is now std::unordered_map which handles Eigen alignment)
+  for (size_t j = 0; j < corners.size(); ++j) {
+    TimeCamId tcid = corners[j];
 
-                        computeInitialPose(calib, tcid.cam_id,
-                                           aprilgrid_corner_pos_3d, ccd, cp);
+    // Progress update every 500 frames
+    if (j % 500 == 0) {
+      std::cout << "  Progress: " << j << "/" << corners.size() << " ("
+                << (100 * j / corners.size()) << "%)" << std::endl;
+    }
 
-                        calib_init_poses.emplace(tcid, cp);
-                      }
-                    });
+    auto it = calib_corners.find(tcid);
+    if (it == calib_corners.end()) {
+      continue;
+    }
+
+    const CalibCornerData &ccd = it->second;
+    if (ccd.corners.empty()) {
+      continue;
+    }
+
+    CalibInitPoseData cp;
+    computeInitialPose(calib, tcid.cam_id, aprilgrid_corner_pos_3d, ccd, cp);
+    calib_init_poses[tcid] = cp;
+  }
+
+  std::cout << "  Done. Computed " << calib_init_poses.size() << " initial poses." << std::endl;
 }
 
 bool CalibHelper::initializeIntrinsics(
@@ -411,31 +467,53 @@ void CalibHelper::computeInitialPose(
     const Calibration<double>::Ptr &calib, size_t cam_id,
     const Eigen::aligned_vector<Eigen::Vector4d> &aprilgrid_corner_pos_3d,
     const CalibCornerData &cd, CalibInitPoseData &cp) {
+  // Check corner count
   if (cd.corners.size() < 8) {
     cp.num_inliers = 0;
     return;
   }
 
-  bool success;
-  size_t num_inliers;
+  // Validate cam_id
+  if (cam_id >= calib->intrinsics.size()) {
+    std::cerr << "ERROR: cam_id " << cam_id << " exceeds intrinsics size "
+              << calib->intrinsics.size() << std::endl;
+    cp.num_inliers = 0;
+    return;
+  }
 
-  std::visit(
-      [&](const auto &cam) {
-        Sophus::SE3d T_target_camera;
-        success = estimateTransformation(cam, cd.corners, cd.corner_ids,
-                                         aprilgrid_corner_pos_3d, cp.T_a_c,
-                                         num_inliers);
-      },
-      calib->intrinsics[cam_id].variant);
+  bool success = false;
+  size_t num_inliers = 0;
+
+  try {
+    std::visit(
+        [&](const auto &cam) {
+          Sophus::SE3d T_target_camera;
+          success = estimateTransformation(cam, cd.corners, cd.corner_ids,
+                                           aprilgrid_corner_pos_3d, cp.T_a_c,
+                                           num_inliers);
+        },
+        calib->intrinsics[cam_id].variant);
+  } catch (const std::exception& e) {
+    std::cerr << "ERROR: Exception in estimateTransformation for camera " << cam_id
+              << ": " << e.what() << std::endl;
+    cp.num_inliers = 0;
+    return;
+  }
 
   if (success) {
-    Eigen::Matrix4d T_c_a_init = cp.T_a_c.inverse().matrix();
+    try {
+      Eigen::Matrix4d T_c_a_init = cp.T_a_c.inverse().matrix();
 
-    std::vector<bool> proj_success;
-    calib->intrinsics[cam_id].project(aprilgrid_corner_pos_3d, T_c_a_init,
-                                      cp.reprojected_corners, proj_success);
+      std::vector<bool> proj_success;
+      calib->intrinsics[cam_id].project(aprilgrid_corner_pos_3d, T_c_a_init,
+                                        cp.reprojected_corners, proj_success);
 
-    cp.num_inliers = num_inliers;
+      cp.num_inliers = num_inliers;
+    } catch (const std::exception& e) {
+      std::cerr << "ERROR: Exception during projection for camera " << cam_id
+                << ": " << e.what() << std::endl;
+      cp.num_inliers = 0;
+    }
   } else {
     cp.num_inliers = 0;
   }

@@ -37,8 +37,8 @@ Optimization (describes square-root optimization and marginalization used in VIO
 ## Installation
 
 ### Prerequisites
-- **Ubuntu 24.04 (recommended)** or Ubuntu 22.04
-- **ROS2 Jazzy** (for Ubuntu 24.04) or ROS2 Humble (for Ubuntu 22.04)
+- **Ubuntu 24.04**
+- **ROS2 Jazzy** (for Ubuntu 24.04) 
 - GCC 13+ / Clang 15+
 
 ### ROS2 Installation
@@ -92,6 +92,38 @@ make -j$(nproc)
 
 ## Usage
 * [Camera, IMU and Mocap calibration. (TUM-VI, Euroc, UZH-FPV and Kalibr datasets)](doc/Calibration.md)
+
+### Stereo Calibration (Left + Right only)
+
+For the stereo pair used in VIO:
+
+```sh
+cd /media/logic/USamsung/basalt_ros2/build
+source /opt/ros/jazzy/setup.bash
+```
+
+```sh
+./basalt_calibrate \
+  --dataset-path /media/logic/USamsung/oak_calibration/oak_calibration/oak_calibration_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid.json \
+  --result-path ~/oak_stereo_calib_result/ \
+  --cam-types ds ds
+```
+
+### All 3 Cameras (Stereo + RGB)
+
+If you want to calibrate all three cameras together:
+
+```sh
+./basalt_calibrate \
+  --dataset-path /media/logic/USamsung/oak_calibration/oak_calibration/oak_calibration_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid.json \
+  --result-path ~/oak_full_calib_result/ \
+  --cam-types ds ds ds
+```
+
 * [Visual-inertial odometry and mapping. (TUM-VI and Euroc datasets)](doc/VioMapping.md)
 * [Visual odometry (no IMU). (KITTI dataset)](doc/Vo.md)
 * [Simulation tools to test different components of the system.](doc/Simulation.md)
