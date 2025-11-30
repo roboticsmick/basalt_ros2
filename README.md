@@ -1,57 +1,88 @@
-## Basalt ROS2
+# Basalt ROS2
 
-**ROS2 Port of Basalt VIO** - Calibration and Visual-Inertial Odometry for ROS2
+**ROS2 Jazzy Port of Basalt VIO** - Camera/IMU Calibration and Visual-Inertial Odometry
 
-This is a ROS2-compatible fork of the original [Basalt project](https://gitlab.com/VladyslavUsenko/basalt) by Vladyslav Usenko.
-For more information about the original project, see https://vision.in.tum.de/research/vslam/basalt
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
+[![ROS2](https://img.shields.io/badge/ROS2-Jazzy-green.svg)](https://docs.ros.org/en/jazzy/)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-orange.svg)](https://ubuntu.com/)
+
+---
+
+## About This Fork
+
+This is a **community-maintained ROS2 port** of the excellent [Basalt VIO project](https://gitlab.com/VladyslavUsenko/basalt) originally developed by **Vladyslav Usenko, Nikolaus Demmel, and collaborators** at the Technical University of Munich.
+
+- **Original Project:** <https://vision.in.tum.de/research/vslam/basalt>
+- **Original Repository:** <https://gitlab.com/VladyslavUsenko/basalt>
+
+> **All credit for the core algorithms, camera models, and VIO implementation belongs to the original authors.**
+> This fork only adds ROS2 Jazzy compatibility and bug fixes for modern toolchains.
 
 ![teaser](doc/img/teaser.png)
 
-### Features
-This project contains tools for:
-* **Camera, IMU and motion capture calibration** using ROS2 bag files (MCAP/SQLite3 format)
-* Visual-inertial odometry and mapping
-* Support for ROS2 Jazzy (Ubuntu 24.04)
-* Compatible with modern camera systems (tested with DepthAI v3)
+---
 
-### Original Project
-The original Basalt project provides a [header-only library](https://gitlab.com/VladyslavUsenko/basalt-headers) ([Documentation](https://vladyslavusenko.gitlab.io/basalt-headers/)) and supports multiple datasets including TUM-VI, EuRoC, and KITTI.
+## What's New in This Fork
 
-## Related Publications
-Visual-Inertial Odometry and Mapping:
-* **Visual-Inertial Mapping with Non-Linear Factor Recovery**, V. Usenko, N. Demmel, D. Schubert, J. Stückler, D. Cremers, In IEEE Robotics and Automation Letters (RA-L) [[DOI:10.1109/LRA.2019.2961227]](https://doi.org/10.1109/LRA.2019.2961227) [[arXiv:1904.06504]](https://arxiv.org/abs/1904.06504).
+### ROS2 Jazzy Compatibility (Ubuntu 24.04)
 
-Calibration (explains implemented camera models):
-* **The Double Sphere Camera Model**, V. Usenko and N. Demmel and D. Cremers, In 2018 International Conference on 3D Vision (3DV), [[DOI:10.1109/3DV.2018.00069]](https://doi.org/10.1109/3DV.2018.00069), [[arXiv:1807.08957]](https://arxiv.org/abs/1807.08957).
+This fork enables Basalt to work with:
+- **ROS2 Jazzy** on Ubuntu 24.04
+- **MCAP** and **SQLite3** bag formats (native ROS2 bag formats)
+- **GCC 13+** (modern C++ compiler compatibility)
+- **DepthAI cameras** and other modern camera systems
 
-Calibration (demonstrates how these tools can be used for dataset calibration):
-* **The TUM VI Benchmark for Evaluating Visual-Inertial Odometry**, D. Schubert, T. Goll,  N. Demmel, V. Usenko, J. Stückler, D. Cremers, In 2018 International Conference on Intelligent Robots and Systems (IROS), [[DOI:10.1109/IROS.2018.8593419]](https://doi.org/10.1109/IROS.2018.8593419), [[arXiv:1804.06120]](https://arxiv.org/abs/1804.06120).
+### Changelog
 
-Calibration (describes B-spline trajectory representation used in camera-IMU calibration):
-* **Efficient Derivative Computation for Cumulative B-Splines on Lie Groups**, C. Sommer, V. Usenko, D. Schubert, N. Demmel, D. Cremers, In 2020 Conference on Computer Vision and Pattern Recognition (CVPR), [[DOI:10.1109/CVPR42600.2020.01116]](https://doi.org/10.1109/CVPR42600.2020.01116), [[arXiv:1911.08860]](https://arxiv.org/abs/1911.08860).
+| Change | Description | Files Modified |
+|--------|-------------|----------------|
+| **ROS2 Bag Support** | Added `dataset_io_rosbag2.cpp/h` for reading ROS2 MCAP/SQLite3 bags | `src/io/`, `include/basalt/io/` |
+| **ROS2 API Updates** | Updated from `time_stamp` to `recv_timestamp` (Jazzy API change) | `dataset_io_rosbag2.cpp` |
+| **SerializedMessage Fix** | Added conversion helper for `rcutils_uint8_array_t` to `rclcpp::SerializedMessage` | `dataset_io_rosbag2.cpp` |
+| **GCC 13 Compatibility** | Added missing `#include <cstdint>` headers to Pangolin | `thirdparty/Pangolin/` |
+| **CMake Fixes** | Fixed duplicate "uninstall" target conflict between Eigen and ament_cmake | `CMakeLists.txt`, `thirdparty/basalt-headers/thirdparty/eigen/CMakeLists.txt` |
+| **Color Image Support** | Added BGR8/RGB8/BGRA8/RGBA8 image encoding support (converted to grayscale) | `dataset_io_rosbag2.cpp` |
+| **Timestamp Sync** | Added 5ms tolerance for multi-camera timestamp synchronization | `dataset_io_rosbag2.cpp` |
+| **TBB Alignment Fix** | Changed `CalibInitPoseMap` from TBB to `std::unordered_map` to fix Eigen alignment crashes | `calibration_helper.h` |
+| **Thread Limiting** | Added option to limit TBB threads to prevent system overload | `calibraiton_helper.cpp` |
+| **Progress Output** | Added progress indicators for long-running operations | `calibraiton_helper.cpp`, `cam_calib.cpp` |
 
-Optimization (describes square-root optimization and marginalization used in VIO/VO):
-* **Square Root Marginalization for Sliding-Window Bundle Adjustment**, N. Demmel, D. Schubert, C. Sommer, D. Cremers, V. Usenko, In 2021 International Conference on Computer Vision (ICCV), [[arXiv:2109.02182]](https://arxiv.org/abs/2109.02182)
+---
 
+## Features
+
+- **Camera Calibration** - Intrinsic and extrinsic calibration using AprilGrid
+- **Camera-IMU Calibration** - Joint camera and IMU calibration
+- **Visual-Inertial Odometry** - Real-time state estimation
+- **Mapping** - Sparse map creation and localization
+- **Multiple Camera Models** - Pinhole, Kannala-Brandt (kb4), Double Sphere (ds), Extended Unified (eucm)
+
+### Supported Dataset Formats
+- ROS2 MCAP bags (`.mcap`)
+- ROS2 SQLite3 bags (`.db3`)
+- EuRoC format
+- TUM-VI format
+- KITTI format
+
+---
 
 ## Installation
 
 ### Prerequisites
-- **Ubuntu 24.04**
-- **ROS2 Jazzy** (for Ubuntu 24.04) 
-- GCC 13+ / Clang 15+
 
-### ROS2 Installation
-First, install ROS2 Jazzy following the [official instructions](https://docs.ros.org/en/jazzy/Installation.html).
+- **Ubuntu 24.04** (tested)
+- **ROS2 Jazzy**
+- **GCC 13+** or **Clang 15+**
 
-For Ubuntu 24.04:
+### Step 1: Install ROS2 Jazzy
+
 ```bash
+# Follow official instructions: https://docs.ros.org/en/jazzy/Installation.html
 sudo apt update && sudo apt install -y ros-jazzy-desktop
 ```
 
-### Build from Source
+### Step 2: Install System Dependencies
 
-1. **Install system dependencies:**
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -61,83 +92,188 @@ sudo apt install -y \
     libjpeg-dev libpng-dev libtiff-dev
 ```
 
-2. **Clone this repository:**
+### Step 3: Clone and Build
+
 ```bash
+# Clone with submodules
 git clone --recursive https://github.com/roboticsmick/basalt_ros2.git
 cd basalt_ros2
-```
 
-3. **Build the project:**
-```bash
-# Source ROS2 environment
+# Source ROS2
 source /opt/ros/jazzy/setup.bash
 
-# Create build directory and build
-rm -rf build && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_ROS2=ON -DUSE_ROS1=OFF
+# Build
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-4. **Built executables will be in the `build/` directory:**
-   - `basalt_calibrate` - Camera calibration
-   - `basalt_calibrate_imu` - Camera-IMU calibration
-   - `basalt_vio` - Visual-Inertial Odometry
-   - `basalt_mapper` - Mapping tool
+### Build Output
 
-### Installation Notes
-- This ROS2 port **does not** use APT packages - build from source only
-- The build has been tested with **GCC 13.3** on Ubuntu 24.04
-- Submodule fixes for Pangolin and Eigen are included for GCC 13+ compatibility
-- ROS2 Jazzy MCAP and SQLite3 bag formats are fully supported
+Executables are created in the `build/` directory:
+- `basalt_calibrate` - Camera calibration tool
+- `basalt_calibrate_imu` - Camera-IMU calibration tool
+- `basalt_vio` - Visual-Inertial Odometry
+- `basalt_mapper` - Mapping tool
+
+---
 
 ## Usage
-* [Camera, IMU and Mocap calibration. (TUM-VI, Euroc, UZH-FPV and Kalibr datasets)](doc/Calibration.md)
 
-### Stereo Calibration (Left + Right only)
+### Camera Calibration with ROS2 Bags
 
-For the stereo pair used in VIO:
+**1. Create an AprilGrid configuration file (`aprilgrid.json`):**
 
-```sh
-cd /media/logic/USamsung/basalt_ros2/build
-source /opt/ros/jazzy/setup.bash
+```json
+{
+    "tagCols": 6,
+    "tagRows": 6,
+    "tagSize": 0.088,
+    "tagSpacing": 0.3
+}
 ```
 
-```sh
+**2. Record calibration data:**
+
+```bash
+# With your camera driver running
+ros2 bag record /camera/left/image_raw /camera/right/image_raw /imu/data
+```
+
+**3. Run calibration:**
+
+```bash
+cd basalt_ros2/build
+source /opt/ros/jazzy/setup.bash
+
 ./basalt_calibrate \
-  --dataset-path /media/logic/USamsung/oak_calibration/oak_calibration/oak_calibration_0.mcap \
+  --dataset-path /path/to/your/recording.mcap \
   --dataset-type mcap \
-  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid.json \
-  --result-path ~/oak_stereo_calib_result/ \
+  --aprilgrid /path/to/aprilgrid.json \
+  --result-path ~/calibration_result/ \
   --cam-types ds ds
 ```
 
-### All 3 Cameras (Stereo + RGB)
+### Camera Model Options
 
-If you want to calibrate all three cameras together:
+| Model | Flag | Description |
+|-------|------|-------------|
+| Double Sphere | `ds` | Good for fisheye lenses (recommended) |
+| Kannala-Brandt | `kb4` | Alternative fisheye model |
+| Pinhole | `pinhole` | Standard pinhole model |
+| Extended Unified | `eucm` | Extended unified camera model |
 
-```sh
+### Example: DepthAI OAK-FFC-3P (3 cameras)
+
+```bash
 ./basalt_calibrate \
-  --dataset-path /media/logic/USamsung/oak_calibration/oak_calibration/oak_calibration_0.mcap \
+  --dataset-path /path/to/oak_calibration.mcap \
   --dataset-type mcap \
-  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid.json \
-  --result-path ~/oak_full_calib_result/ \
+  --aprilgrid /path/to/aprilgrid.json \
+  --result-path ~/oak_calib_result/ \
   --cam-types ds ds ds
 ```
 
-* [Visual-inertial odometry and mapping. (TUM-VI and Euroc datasets)](doc/VioMapping.md)
-* [Visual odometry (no IMU). (KITTI dataset)](doc/Vo.md)
-* [Simulation tools to test different components of the system.](doc/Simulation.md)
-* [Batch evaluation tutorial (ICCV'21 experiments)](doc/BatchEvaluation.md)
+---
 
-## Device support
-* [Tutorial on Camera-IMU and Motion capture calibration with Realsense T265.](doc/Realsense.md)
+## Recording Tips for Best Results
 
-## Development
-* [Development environment setup.](doc/DevSetup.md)
+### Camera Synchronization
 
-## Licence
-The code is provided under a BSD 3-clause license. See the LICENSE file for details.
-Note also the different licenses of thirdparty submodules.
+For multi-camera systems, ensure hardware synchronization is enabled. Example for DepthAI ROS2 driver:
 
-Some improvements are ported back from the fork
-[granite](https://github.com/DLR-RM/granite) (MIT license).
+```yaml
+# In your camera config yaml
+left:
+  i_synced: true
+  i_fsync_continuous: true
+  i_fsync_mode: "OUTPUT"  # Master camera
+right:
+  i_synced: true
+  i_fsync_continuous: true
+  i_fsync_mode: "INPUT"   # Slave camera
+```
+
+### Calibration Recording Guidelines
+
+1. **Duration**: 30-60 seconds of movement
+2. **Motion**: Slow, smooth movements covering all axes
+3. **Coverage**: Move the AprilGrid to cover the entire field of view
+4. **Distance**: Vary the distance from close to far
+5. **Angles**: Include tilted views of the calibration target
+
+---
+
+## Known Issues & Workarounds
+
+| Issue | Workaround |
+|-------|------------|
+| Low sync rate (< 50%) | Enable hardware FSYNC in camera driver |
+| Segfault during pose computation | Fixed in this fork (TBB alignment issue) |
+| "Null image" errors | Normal for unsynchronized frames - calibration still works |
+| DS initialization fails | Falls back to pinhole - calibration continues |
+
+---
+
+## Documentation
+
+- [Calibration Guide](doc/Calibration.md)
+- [VIO and Mapping](doc/VioMapping.md)
+- [Visual Odometry (no IMU)](doc/Vo.md)
+- [Simulation Tools](doc/Simulation.md)
+- [RealSense T265 Tutorial](doc/Realsense.md)
+
+---
+
+## Related Publications
+
+Please cite the original authors if you use this software:
+
+**Visual-Inertial Odometry:**
+```bibtex
+@article{usenko2019visual,
+  title={Visual-Inertial Mapping with Non-Linear Factor Recovery},
+  author={Usenko, Vladyslav and Demmel, Nikolaus and Schubert, David and St{\"u}ckler, J{\"o}rg and Cremers, Daniel},
+  journal={IEEE Robotics and Automation Letters (RA-L)},
+  year={2019},
+  doi={10.1109/LRA.2019.2961227}
+}
+```
+
+**Double Sphere Camera Model:**
+```bibtex
+@inproceedings{usenko2018double,
+  title={The Double Sphere Camera Model},
+  author={Usenko, Vladyslav and Demmel, Nikolaus and Cremers, Daniel},
+  booktitle={2018 International Conference on 3D Vision (3DV)},
+  year={2018},
+  doi={10.1109/3DV.2018.00069}
+}
+```
+
+---
+
+## License
+
+This project is licensed under the **BSD 3-Clause License** - see the [LICENSE](LICENSE) file.
+
+**Note:** The core algorithms and implementation are the work of the original Basalt authors. This fork only adds ROS2 compatibility modifications.
+
+---
+
+## Acknowledgments
+
+- **Original Basalt Authors**: Vladyslav Usenko, Nikolaus Demmel, David Schubert, Christiane Sommer, and Daniel Cremers at TUM
+- **Granite Fork**: Some improvements ported from [DLR-RM/granite](https://github.com/DLR-RM/granite) (MIT license)
+- **ROS2 Port**: Community contribution for ROS2 Jazzy compatibility
+
+---
+
+## Contributing
+
+Contributions are welcome! Please:
+1. Fork this repository
+2. Create a feature branch
+3. Submit a pull request
+
+For major changes, please open an issue first to discuss the proposed changes.
