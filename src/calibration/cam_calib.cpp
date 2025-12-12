@@ -480,8 +480,17 @@ void CamCalib::initCamIntrinsics() {
   int inc = 1;
   if (vio_dataset->get_image_timestamps().size() > 100) inc = 3;
 
+  std::cout << "\n=== Phase 1: Single-Frame Initialization ===" << std::endl;
+  std::cout << "  Attempting to estimate initial parameters from individual frames with detected corners." << std::endl;
+  std::cout << "  Target models: ";
   for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
-    std::cout << "\n--- Initializing camera " << j << " (model: " << cam_types[j] << ") ---" << std::endl;
+    std::cout << "cam" << j << "=" << cam_types[j];
+    if (j < vio_dataset->get_num_cams() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+
+  for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
+    std::cout << "\n--- Camera " << j << " (target model: " << cam_types[j] << ") ---" << std::endl;
 
     size_t null_image_count = 0;
     size_t frames_checked = 0;
@@ -531,7 +540,8 @@ void CamCalib::initCamIntrinsics() {
     }
 
     if (!cam_initialized[j]) {
-      std::cout << "  ⚠ Camera " << j << " not initialized yet, will try pinhole fallback" << std::endl;
+      std::cout << "  ⚠ Camera " << j << ": Single-frame initialization unsuccessful." << std::endl;
+      std::cout << "    Will use multi-frame method to estimate initial parameters." << std::endl;
     }
 
     if (null_image_count > 0) {
@@ -541,10 +551,16 @@ void CamCalib::initCamIntrinsics() {
   }
 
   // Try perfect pinhole initialization for cameras that are not initalized.
-  std::cout << "\n=== Pinhole fallback initialization ===" << std::endl;
+  // NOTE: This estimates fx, fy, cx, cy as a starting point. The optimizer will
+  // then refine ALL parameters (including distortion) for the requested model.
+  std::cout << "\n=== Phase 2: Multi-Frame Initialization ===" << std::endl;
+  std::cout << "  For cameras not initialized in Phase 1, estimating fx, fy, cx, cy" << std::endl;
+  std::cout << "  using corners from multiple frames (more robust)." << std::endl;
+  std::cout << "  Distortion parameters start at 0 and will be refined during optimization." << std::endl;
   for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
     if (!cam_initialized[j]) {
-      std::cout << "Trying pinhole initialization for camera " << j << std::endl;
+      std::cout << "\nEstimating initial parameters for camera " << j
+                << " (target model: " << cam_types[j] << ")" << std::endl;
       std::vector<CalibCornerData *> pinhole_corners;
       int w = 0;
       int h = 0;
@@ -601,21 +617,31 @@ void CamCalib::initCamIntrinsics() {
       if (success) {
         cam_initialized[j] = true;
 
-        std::cout << "Initialized camera " << j
-                  << " with pinhole model. You should set pinhole model for "
-                     "this camera!"
-                  << std::endl;
+        std::cout << "  ✓ Camera " << j << " initial estimate: fx=" << init_intr[0]
+                  << ", fy=" << init_intr[1] << ", cx=" << init_intr[2]
+                  << ", cy=" << init_intr[3] << std::endl;
+        std::cout << "    (Distortion params initialized to 0, will be optimized for "
+                  << cam_types[j] << " model)" << std::endl;
         calib_opt->calib->intrinsics[j].setFromInit(init_intr);
+      } else {
+        std::cerr << "  ✗ Failed to estimate initial parameters for camera " << j << std::endl;
       }
     }
   }
 
-  std::cout << "Done camera intrinsics initialization:" << std::endl;
+  std::cout << "\n=== Initialization Complete ===" << std::endl;
+  std::cout << "Initial parameter estimates ready for optimization:" << std::endl;
   for (size_t j = 0; j < vio_dataset->get_num_cams(); j++) {
-    std::cout << "Cam " << j << ": "
+    std::cout << "  Cam " << j << " (" << cam_types[j] << "): "
               << calib_opt->calib->intrinsics[j].getParam().transpose()
               << std::endl;
   }
+  std::cout << "\nNext steps in GUI:" << std::endl;
+  std::cout << "  1. init_cam_poses  - Estimate camera poses from corners" << std::endl;
+  std::cout << "  2. init_cam_extr   - Compute camera-to-camera transforms" << std::endl;
+  std::cout << "  3. init_opt        - Initialize optimization" << std::endl;
+  std::cout << "  4. optimize        - Refine ALL parameters (including distortion)" << std::endl;
+  std::cout << "  5. save_calib      - Save final calibration.json" << std::endl;
 
   // set resolution
   {
