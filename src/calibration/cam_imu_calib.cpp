@@ -208,8 +208,9 @@ void CamImuCalib::computeProjections() {
     int64_t timestamp_corrected_ns =
         timestamp_ns + calib_opt->getCamTimeOffsetNs();
 
-    if (timestamp_corrected_ns < calib_opt->getMinTimeNs() ||
-        timestamp_corrected_ns >= calib_opt->getMaxTimeNs())
+    if (!calib_opt->initialized() ||
+        timestamp_corrected_ns < calib_opt->getSplineMinTimeNs() ||
+        timestamp_corrected_ns >= calib_opt->getSplineMaxTimeNs())
       continue;
 
     for (size_t i = 0; i < calib_opt->calib->intrinsics.size(); i++) {
@@ -409,6 +410,9 @@ void CamImuCalib::initOptimization() {
   }
 
   calib_opt->setAprilgridCorners3d(april_grid.aprilgrid_corner_pos_3d);
+
+  // Clear previous measurements to avoid doubling on re-initialization
+  calib_opt->resetMeasurements();
 
   for (size_t i = 0; i < vio_dataset->get_accel_data().size(); i++) {
     const basalt::AccelData &ad = vio_dataset->get_accel_data()[i];
@@ -710,10 +714,12 @@ bool CamImuCalib::optimizeWithParam(bool print_info,
 
       stats->emplace("energy_error", error);
       stats->emplace("num_points", num_points);
-      stats->emplace("mean_energy_error", error / num_points);
-      stats->emplace("reprojection_error", reprojection_error);
-      stats->emplace("mean_reprojection_error",
-                     reprojection_error / num_points);
+      if (num_points > 0) {
+        stats->emplace("mean_energy_error", error / num_points);
+        stats->emplace("reprojection_error", reprojection_error);
+        stats->emplace("mean_reprojection_error",
+                       reprojection_error / num_points);
+      }
     }
 
     if (print_info) {
@@ -761,9 +767,10 @@ bool CamImuCalib::optimizeWithParam(bool print_info,
                 << std::endl;
 
       std::cout << "Current error: " << error << " num_points " << num_points
-                << " mean_error " << error / num_points
+                << " mean_error " << (num_points > 0 ? error / num_points : 0)
                 << " reprojection_error " << reprojection_error
-                << " mean reprojection " << reprojection_error / num_points
+                << " mean reprojection "
+                << (num_points > 0 ? reprojection_error / num_points : 0)
                 << " opt_time "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
                        finish - start)
@@ -935,7 +942,9 @@ void CamImuCalib::recomputeDataLog() {
     Eigen::Vector3d a_sp(0, 0, 0), g_sp(0, 0, 0);
 
     if (calib_opt && calib_opt->calibInitialized() &&
-        calib_opt->initialized()) {
+        calib_opt->initialized() &&
+        ad.timestamp_ns >= calib_opt->getSplineMinTimeNs() &&
+        ad.timestamp_ns < calib_opt->getSplineMaxTimeNs()) {
       Sophus::SE3d pose_sp = calib_opt->getT_w_i(ad.timestamp_ns);
       Eigen::Vector3d a_sp_w = calib_opt->getTransAccelWorld(ad.timestamp_ns);
 
@@ -967,7 +976,9 @@ void CamImuCalib::recomputeDataLog() {
     double t = timestamp_ns * 1e-9 - min_time;
 
     Sophus::SE3d pose_sp, pose_meas;
-    if (calib_opt && calib_opt->initialized())
+    if (calib_opt && calib_opt->initialized() &&
+        timestamp_ns >= calib_opt->getSplineMinTimeNs() &&
+        timestamp_ns < calib_opt->getSplineMaxTimeNs())
       pose_sp = calib_opt->getT_w_i(timestamp_ns);
 
     if (it != calib_init_poses.end() && calib_opt &&

@@ -33,7 +33,7 @@ This fork is specifically developed for use with:
 | Component | Status | Notes |
 |-----------|--------|-------|
 | **Camera Calibration** | ✅ Working | Tested with OAK-FFC-3P, MCAP bags |
-| **IMU Calibration** | ⚠️ Untested | Refactoring in progress |
+| **IMU Calibration** | ⚠️ Testing | Optimizer restored to match original Basalt |
 | **VIO** | ⚠️ Untested | Needs calibration files first |
 | **Mapping** | ⚠️ Untested | Needs VIO working first |
 
@@ -343,6 +343,18 @@ source /opt/ros/jazzy/setup.bash
   --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
 ```
 
+Example:
+
+```bash
+./basalt_calibrate \
+  --dataset-path /media/logic/USamsung/oak_calibration/imu_calibration/imu_calibration_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid_large.json \
+  --result-path /media/logic/USamsung/oak_calibration/oak_results/ \
+  --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
+```
+
+
 ### Step 4: In the GUI
 
 1. Wait for corner detection to complete
@@ -367,6 +379,140 @@ source /opt/ros/jazzy/setup.bash
 3. Check for motion blur in images
 4. Ensure AprilGrid is perfectly flat
 5. Re-record with slower movements
+
+---
+
+## Camera + IMU Calibration Workflow
+
+After completing camera calibration and saving `calibration.json`, you can calibrate the camera-IMU extrinsics. This determines the transform between the IMU and cameras (`T_i_c`), which is required for VIO.
+
+### Step 1: Record IMU Calibration Data
+
+**IMPORTANT: You MUST record a separate dataset for IMU calibration.** The camera calibration recording will NOT work because the camera/IMU was stationary (you moved the AprilGrid board). For IMU calibration, you must **move the camera+IMU rig** in front of a **stationary AprilGrid**.
+
+```bash
+ros2 bag record -o imu_calibration_recording \
+    /oak/left/image_raw \
+    /oak/rgb/image_raw \
+    /oak/right/image_raw \
+    /oak/imu/data
+```
+
+**Recording procedure:**
+
+1. Mount the AprilGrid on a **wall or flat surface** (it must stay perfectly still)
+2. Hold the camera rig and stand ~0.3-1.0m from the board
+3. **Move the camera dynamically** - rotate around all 3 axes (pitch, yaw, roll)
+4. Include smooth accelerations and decelerations
+5. Keep the AprilGrid visible in at least one camera most of the time
+6. Duration: 60-120 seconds
+
+**Common mistake:** If you used a tripod-mounted camera and moved the board for camera calibration, you **cannot reuse** that recording for IMU calibration. The IMU must experience dynamic motion (rotations > 30 deg/s) for the calibration to work. You can verify your recording has sufficient motion by checking that gyroscope magnitudes reach 1-5 rad/s during the recording.
+
+### Step 2: Find IMU Noise Parameters
+
+The IMU noise parameters come from your IMU's datasheet. They use the [Kalibr continuous-time noise model](https://github.com/ethz-asl/kalibr/wiki/IMU-Noise-Model):
+
+| Parameter | Unit | Description |
+|-----------|------|-------------|
+| `--gyro-noise-std` | rad/s/√Hz | Gyroscope white noise density |
+| `--accel-noise-std` | m/s²/√Hz | Accelerometer white noise density |
+| `--gyro-bias-std` | rad/s²/√Hz | Gyroscope bias random walk |
+| `--accel-bias-std` | m/s³/√Hz | Accelerometer bias random walk |
+
+**Recommended values by IMU:**
+
+| IMU | Gyro Noise | Accel Noise | Gyro Bias | Accel Bias |
+|-----|-----------|-------------|-----------|------------|
+| BNO086 (OAK-FFC-3P) | 0.0005 | 0.02 | 0.0001 | 0.001 |
+| BMI160 (TUM-VI/EuRoC) | 0.000282 | 0.016 | 0.0001 | 0.001 |
+| Snapdragon (UZH-FPV) | 0.05 | 0.1 | 4e-5 | 0.002 |
+
+If you don't know your IMU's specs, start with the defaults (BMI160 row) and adjust if needed. The BNO086 outputs calibrated/fused data so its effective noise density is similar to or lower than raw MEMS sensors. **Warning:** Setting `gyro-noise-std` too high (e.g. >0.002) will de-weight gyroscope measurements and prevent the optimizer from constraining rotation dynamics.
+
+### Step 3: Run IMU Calibration
+
+The `--result-path` **must point to the same folder** where `calibration.json` was saved from camera calibration:
+
+```bash
+cd basalt_ros2/build
+source /opt/ros/jazzy/setup.bash
+
+./basalt_calibrate_imu \
+  --dataset-path /path/to/imu_calibration_recording/imu_calibration_recording_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid /path/to/aprilgrid.json \
+  --result-path ~/oak_calibration_result/ \
+  --gyro-noise-std 0.0005 \
+  --accel-noise-std 0.02 \
+  --gyro-bias-std 0.0001 \
+  --accel-bias-std 0.001
+```
+
+Example (OAK-FFC-3P with BNO086):
+
+```bash
+./basalt_calibrate_imu \
+  --dataset-path /media/logic/USamsung/oak_calibration/imu_calibration/imu_calibration_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid_large.json \
+  --result-path /media/logic/USamsung/oak_calibration/oak_results/ \
+  --gyro-noise-std 0.0005 \
+  --accel-noise-std 0.02 \
+  --gyro-bias-std 0.0001 \
+  --accel-bias-std 0.001
+```
+
+### Step 4: In the IMU Calibration GUI
+
+Follow the buttons **in order from left to right**:
+
+1. Click **"load_dataset"** - Load the IMU calibration recording
+2. Click **"detect_corners"** - Detect AprilGrid corners (uses cached results if available)
+3. Click **"init_cam_poses"** - Compute initial camera poses from corners
+4. Click **"init_cam_imu"** - Initialize the rotation between camera and IMU by aligning camera rotation velocities with gyro data
+5. Click **"init_opt"** - Initialize the spline optimization. You should see the IMU data plotted below with the spline overlay
+6. Click **"optimize"** repeatedly or check **"opt_until_converge"** - Run optimization until convergence
+
+**GUI checkbox settings for optimization:**
+
+| Checkbox | Default | When to use |
+|----------|---------|-------------|
+| `opt_intr` | OFF | Leave OFF - camera intrinsics are already calibrated |
+| `opt_poses` | OFF | Can enable for a few iterations to help initialize the spline before switching to corners |
+| `opt_corners` | ON | **Should be ON by default** - this is the primary optimization mode |
+| `opt_cam_time_offset` | OFF | Enable only **after** the main optimization has converged, for refinement |
+| `opt_imu_scale` | OFF | Enable only **after** the main optimization has converged, for refinement |
+| `opt_mocap` | OFF | Only if you have Mocap data (not applicable for most setups) |
+
+**Recommended optimization sequence:**
+1. With defaults (`opt_corners` ON, everything else OFF), click **"optimize"** or check **"opt_until_converge"** and wait for convergence
+2. Optionally enable `opt_cam_time_offset` and run a few more iterations for time offset refinement
+3. Optionally enable `opt_imu_scale` and run a few more iterations for IMU scale/misalignment refinement
+4. Click **"save_calib"** to overwrite `calibration.json` with the updated calibration including IMU extrinsics
+
+### Step 5: Evaluate IMU Calibration Results
+
+**In the GUI plots:**
+- `show_accel` / `show_gyro` - Toggle accelerometer/gyroscope data display
+- `show_data` (dashed lines) - Raw IMU measurements
+- `show_spline` (solid lines) - Optimized spline fit
+- The solid spline lines should closely follow the dashed raw data lines when calibration is good
+
+**In the console output:**
+- `T_i_c0`, `T_i_c1`, `T_i_c2` - The IMU-to-camera transforms (should match your physical mounting)
+- `g` vector - Should have norm close to **9.81 m/s²**
+- `accel_bias` and `gyro_bias` - Should be small values
+- Error should decrease and converge
+
+**If optimization doesn't converge:**
+
+1. **g norm ~1.0 instead of ~9.81, accel_bias absorbing gravity:** Your recording has no IMU motion. You likely moved the AprilGrid board instead of the camera. Record a new dataset where you **move the camera rig** in front of a stationary board.
+2. **Reprojection error >100 pixels:** The `init_cam_imu` step failed (degenerate angular velocity matching). This happens when the recording has near-zero angular velocity. Record with dynamic rotational motion.
+3. Try enabling `opt_poses` for a few iterations first, then switch to `opt_corners`
+4. Verify the AprilGrid is visible and corners are detected in the recording
+5. Check that the camera calibration (`calibration.json`) is good (low reprojection error)
+6. Do NOT inflate `gyro-noise-std` above 0.002 - this de-weights gyro data and prevents rotation estimation
 
 ---
 

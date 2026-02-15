@@ -183,6 +183,17 @@ class SplineOptimization {
 
   bool initialized() const { return spline.numKnots() > 0; }
 
+  /// Clear all measurements and reset time bounds for re-initialization
+  void resetMeasurements() {
+    pose_measurements.clear();
+    gyro_measurements.clear();
+    accel_measurements.clear();
+    aprilgrid_corners_measurements.clear();
+    mocap_measurements.clear();
+    min_time_us = std::numeric_limits<int64_t>::max();
+    max_time_us = std::numeric_limits<int64_t>::min();
+  }
+
   void initSpline(const SE3& pose, int num_knots) {
     spline.setKnots(pose, num_knots);
   }
@@ -290,6 +301,10 @@ class SplineOptimization {
   int64_t getMinTimeNs() const { return min_time_us; }
   int64_t getMaxTimeNs() const { return max_time_us; }
 
+  /// Spline's actual evaluatable time range (may differ from min/max_time_us)
+  int64_t getSplineMinTimeNs() const { return spline.minTimeNs(); }
+  int64_t getSplineMaxTimeNs() const { return spline.maxTimeNs(); }
+
   void init() {
     int64_t time_interval_us = max_time_us - min_time_us;
 
@@ -335,6 +350,7 @@ class SplineOptimization {
 
   void recompute_size() {
     offset_cam_intrinsics.clear();
+    offset_T_i_c.clear();
 
     size_t num_knots = spline.numKnots();
 
@@ -371,7 +387,13 @@ class SplineOptimization {
                 double huber_thresh, double stop_thresh, double& error,
                 int& num_points, double& reprojection_error,
                 bool print_info = true) {
-    // std::cerr << "optimize num_knots " << num_knots << std::endl;
+    if (spline.numKnots() == 0) {
+      std::cerr << "Spline not initialized. Run init_opt first!" << std::endl;
+      error = 0;
+      num_points = 0;
+      reprojection_error = 0;
+      return true;
+    }
 
     ccd.opt_intrinsics = use_intr;
     ccd.opt_cam_time_offset = opt_cam_time_offset;
