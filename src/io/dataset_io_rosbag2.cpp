@@ -476,18 +476,34 @@ std::vector<ImageData> Rosbag2VioDataset::get_image_data(int64_t t_ns) {
     }
 
     // Convert image data based on encoding
+    // Note: For multi-channel formats, we respect the row stride (step) field
+    // to handle images with row padding correctly.
+    const uint32_t width = img_msg->width;
+    const uint32_t height = img_msg->height;
+    const uint32_t step = img_msg->step;
+
     if (img_msg->encoding == "mono8") {
       const uint8_t* data_in = img_msg->data.data();
       uint16_t* data_out = id.img->ptr;
 
-      for (size_t j = 0; j < img_msg->data.size(); j++) {
-        int val = data_in[j];
-        val = val << 8;  // Scale to 16-bit
-        data_out[j] = val;
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          int val = row_in[col];
+          row_out[col] = val << 8;  // Scale to 16-bit
+        }
       }
 
     } else if (img_msg->encoding == "mono16") {
-      std::memcpy(id.img->ptr, img_msg->data.data(), img_msg->data.size());
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      for (uint32_t row = 0; row < height; row++) {
+        std::memcpy(data_out + row * width,
+                    data_in + row * step,
+                    width * sizeof(uint16_t));
+      }
 
     } else if (img_msg->encoding == "bgr8" || img_msg->encoding == "rgb8") {
       // Convert BGR8/RGB8 to grayscale using luminosity method
@@ -496,17 +512,19 @@ std::vector<ImageData> Rosbag2VioDataset::get_image_data(int64_t t_ns) {
       uint16_t* data_out = id.img->ptr;
 
       bool is_bgr = (img_msg->encoding == "bgr8");
-      size_t num_pixels = img_msg->width * img_msg->height;
 
-      for (size_t j = 0; j < num_pixels; j++) {
-        size_t idx = j * 3;
-        uint8_t b = data_in[idx + (is_bgr ? 0 : 2)];
-        uint8_t g = data_in[idx + 1];
-        uint8_t r = data_in[idx + (is_bgr ? 2 : 0)];
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          size_t idx = col * 3;
+          uint8_t b = row_in[idx + (is_bgr ? 0 : 2)];
+          uint8_t g = row_in[idx + 1];
+          uint8_t r = row_in[idx + (is_bgr ? 2 : 0)];
 
-        // Convert to grayscale using standard luminosity formula
-        int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
-        data_out[j] = gray << 8;  // Scale to 16-bit
+          int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+          row_out[col] = gray << 8;  // Scale to 16-bit
+        }
       }
 
     } else if (img_msg->encoding == "bgra8" || img_msg->encoding == "rgba8") {
@@ -515,18 +533,19 @@ std::vector<ImageData> Rosbag2VioDataset::get_image_data(int64_t t_ns) {
       uint16_t* data_out = id.img->ptr;
 
       bool is_bgr = (img_msg->encoding == "bgra8");
-      size_t num_pixels = img_msg->width * img_msg->height;
 
-      for (size_t j = 0; j < num_pixels; j++) {
-        size_t idx = j * 4;
-        uint8_t b = data_in[idx + (is_bgr ? 0 : 2)];
-        uint8_t g = data_in[idx + 1];
-        uint8_t r = data_in[idx + (is_bgr ? 2 : 0)];
-        // Alpha channel at idx+3 is ignored
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          size_t idx = col * 4;
+          uint8_t b = row_in[idx + (is_bgr ? 0 : 2)];
+          uint8_t g = row_in[idx + 1];
+          uint8_t r = row_in[idx + (is_bgr ? 2 : 0)];
 
-        // Convert to grayscale using standard luminosity formula
-        int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
-        data_out[j] = gray << 8;  // Scale to 16-bit
+          int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+          row_out[col] = gray << 8;  // Scale to 16-bit
+        }
       }
 
     } else {

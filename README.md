@@ -299,22 +299,52 @@ Executables are created in the `build/` directory:
 
 ### Step 1: Record Calibration Data
 
+You need **two separate recordings** for the full calibration pipeline:
+
+| Recording           | Config                        | Cameras                    | Purpose                                          |
+|---------------------|-------------------------------|----------------------------|--------------------------------------------------|
+| **A: Camera calib** | `oak_ffc_3p_sync.yaml`        | All 3 (left + rgb + right) | Calibrate all camera intrinsics and extrinsics   |
+| **B: IMU calib**    | `oak_ffc_3p_stereo_imu.yaml`  | Stereo only (left + right) | Calibrate IMU extrinsics at higher FPS           |
+
+**Why two recordings?** The 3-camera config (all BGR8) saturates USB bandwidth, limiting FPS to ~4.5. IMU calibration requires 15-30+ fps to properly constrain time alignment and motion dynamics. The stereo-only config drops the RGB camera, allowing 30 fps.
+
+#### Recording A: Camera Calibration
+
+Mount camera on tripod. Move the **AprilGrid board** slowly in front of the cameras, covering all image regions.
+
 ```bash
-# With your camera driver running (ensure hardware sync is enabled)
-ros2 bag record -o calibration_recording \
-    /oak/left/image_raw \
-    /oak/rgb/image_raw \
-    /oak/right/image_raw \
-    /oak/imu/data
+# Terminal 1: 3-camera sync driver
+cd ~/dai_ws && source install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_sync.yaml \
+  camera_model:=OAK-FFC-3P
+
+# Terminal 2: Record (30-60 seconds)
+ros2 bag record -o cam_calibration \
+  /oak/left/image_raw /oak/rgb/image_raw /oak/right/image_raw /oak/imu/data
 ```
 
-**Recording tips:**
-- Duration: 30-60 seconds
-- Move slowly and smoothly
-- Cover all image corners with the AprilGrid
-- Vary distance (close and far)
-- Include tilted views
-- Ensure good lighting, avoid motion blur
+#### Recording B: IMU Calibration
+
+Mount the **AprilGrid on a wall**. Hold the camera rig and **move it dynamically** — rotate around all 3 axes (pitch, yaw, roll).
+
+```bash
+# Terminal 1: Stereo-only driver (30 fps, no RGB)
+cd ~/dai_ws && source install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_imu.yaml \
+  camera_model:=OAK-FFC-3P
+
+# Terminal 2: Record stereo + IMU (60-90 seconds)
+ros2 bag record -o imu_calibration \
+  /oak/left/image_raw /oak/right/image_raw /oak/imu/data
+```
+
+**IMU recording tips:**
+- Hold still 2-3 seconds at start and end
+- Keep AprilGrid visible in both cameras throughout
+- Include smooth accelerations and decelerations
+- Gyroscope should reach 1-5 rad/s during rotations
 
 ### Step 2: Create AprilGrid Config
 
@@ -329,31 +359,32 @@ cat > aprilgrid.json << 'EOF'
 EOF
 ```
 
-### Step 3: Run Calibration
+### Step 3: Run Camera Calibration
+
+**3-camera calibration** (Recording A) — use `ds` (double sphere) for the wide-angle IMX577 RGB camera:
 
 ```bash
 cd basalt_ros2/build
 source /opt/ros/jazzy/setup.bash
 
 ./basalt_calibrate \
-  --dataset-path /path/to/calibration_recording/calibration_recording_0.mcap \
+  --dataset-path /path/to/cam_calibration/cam_calibration_0.mcap \
   --dataset-type mcap \
   --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/oak_calibration_result/ \
-  --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
+  --result-path ~/oak_results_3cam/ \
+  --cam-types pinhole-radtan8 ds pinhole-radtan8
 ```
 
-Example:
+**Stereo-only calibration** (Recording B) — needed before IMU calibration:
 
 ```bash
 ./basalt_calibrate \
-  --dataset-path /media/logic/USamsung/oak_calibration/imu_calibration/imu_calibration_0.mcap \
+  --dataset-path /path/to/imu_calibration/imu_calibration_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid_large.json \
-  --result-path /media/logic/USamsung/oak_calibration/oak_results/ \
-  --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
+  --aprilgrid /path/to/aprilgrid.json \
+  --result-path ~/oak_results_stereo/ \
+  --cam-types pinhole-radtan8 pinhole-radtan8
 ```
-
 
 ### Step 4: In the GUI
 
@@ -453,7 +484,7 @@ Example (OAK-FFC-3P with BNO086):
 
 ```bash
 ./basalt_calibrate_imu \
-  --dataset-path /media/logic/USamsung/oak_calibration/imu_calibration/imu_calibration_0.mcap \
+  --dataset-path /media/logic/USamsung/oak_calibration/calibration_recording_basalt2/calibration_recording_basalt2_0.mcap \
   --dataset-type mcap \
   --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid_large.json \
   --result-path /media/logic/USamsung/oak_calibration/oak_results/ \

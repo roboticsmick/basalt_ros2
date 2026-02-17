@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 
   app.add_option("--skip-images", skip_images, "Number of images to skip");
   app.add_option("--cam-types", cam_types,
-                 "Type of cameras (eucm, ds, kb4, pinhole)")
+                 "Type of cameras (pinhole, pinhole-radtan8, ds, kb4, eucm, ucm, fov)")
       ->required();
 
   try {
