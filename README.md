@@ -167,30 +167,30 @@ k1, k2, k3, k4 - Radial distortion coefficients
 **OAK-FFC-3P with M12 lenses (recommended):**
 ```bash
 ./basalt_calibrate \
-  --dataset-path /path/to/recording.mcap \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_record/stereo_rgb_imu_calibration_record_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/calibration_result/ \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results \
   --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
 ```
 
 **Wide-angle fisheye cameras:**
 ```bash
 ./basalt_calibrate \
-  --dataset-path /path/to/recording.mcap \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_record/stereo_rgb_imu_calibration_record_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/calibration_result/ \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results \
   --cam-types ds ds ds
 ```
 
 **Mixed setup (fisheye RGB + standard stereo):**
 ```bash
 ./basalt_calibrate \
-  --dataset-path /path/to/recording.mcap \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_record/stereo_rgb_imu_calibration_record_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/calibration_result/ \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results \
   --cam-types pinhole-radtan8 kb4 pinhole-radtan8
 ```
 
@@ -220,7 +220,7 @@ Create a JSON file (e.g., `aprilgrid.json`):
 | `tagSize` | Size of one tag in **meters** | Measure edge of black square with calipers |
 | `tagSpacing` | **Ratio** of gap to tag size | `gap_between_tags / tagSize` |
 
-### ⚠️ Common Mistake: tagSpacing
+### Common Mistake: tagSpacing
 
 `tagSpacing` is a **RATIO**, not an absolute measurement!
 
@@ -295,61 +295,39 @@ Executables are created in the `build/` directory:
 
 ---
 
-## Camera Calibration Workflow
+## Calibration Workflow
 
-### Step 1: Record Calibration Data
+The full calibration pipeline has 4 steps using 2 separate recordings. The stereo + IMU calibration must be done first (requires high FPS), then the RGB camera is calibrated relative to the stereo pair (low FPS is fine).
 
-You need **two separate recordings** for the full calibration pipeline:
+For recording instructions, see the [depthai-ros README](https://github.com/roboticsmick/depthai-ros).
 
-| Recording           | Config                        | Cameras                    | Purpose                                          |
-|---------------------|-------------------------------|----------------------------|--------------------------------------------------|
-| **A: Camera calib** | `oak_ffc_3p_sync.yaml`        | All 3 (left + rgb + right) | Calibrate all camera intrinsics and extrinsics   |
-| **B: IMU calib**    | `oak_ffc_3p_stereo_imu.yaml`  | Stereo only (left + right) | Calibrate IMU extrinsics at higher FPS           |
-
-**Why two recordings?** The 3-camera config (all BGR8) saturates USB bandwidth, limiting FPS to ~4.5. IMU calibration requires 15-30+ fps to properly constrain time alignment and motion dynamics. The stereo-only config drops the RGB camera, allowing 30 fps.
-
-#### Recording A: Camera Calibration
-
-Mount camera on tripod. Move the **AprilGrid board** slowly in front of the cameras, covering all image regions.
+**Path convention:** This guide uses `$DEV_HOME` to refer to your development workspace root. Set it in your `~/.bashrc`:
 
 ```bash
-# Terminal 1: 3-camera sync driver
-cd ~/dai_ws && source install/setup.bash
-ros2 launch depthai_ros_driver driver.launch.py \
-  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_sync.yaml \
-  camera_model:=OAK-FFC-3P
-
-# Terminal 2: Record (30-60 seconds)
-ros2 bag record -o cam_calibration \
-  /oak/left/image_raw /oak/rgb/image_raw /oak/right/image_raw /oak/imu/data
+export DEV_HOME="/path/to/your/workspace"  # e.g. ~/ or /media/user/nvme
 ```
 
-#### Recording B: IMU Calibration
+**IMPORTANT:** The `--result-path` for camera calibration and IMU calibration **must match**, and the number of cameras in the calibration file must match the recording. Using a 3-camera `calibration.json` with a 2-camera recording will cause the IMU optimizer to apply wrong intrinsics to wrong cameras and fail silently.
 
-Mount the **AprilGrid on a wall**. Hold the camera rig and **move it dynamically** — rotate around all 3 axes (pitch, yaw, roll).
+### Overview
 
-```bash
-# Terminal 1: Stereo-only driver (30 fps, no RGB)
-cd ~/dai_ws && source install/setup.bash
-ros2 launch depthai_ros_driver driver.launch.py \
-  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_imu.yaml \
-  camera_model:=OAK-FFC-3P
+```text
+Recording 1: Stereo + IMU (30 fps, stereo-only driver)
+  ├── Step 1: Stereo camera calibration  → stereo_imu_calibration_results/calibration.json
+  └── Step 2: IMU calibration            → stereo_imu_calibration_results/calibration.json (updated)
 
-# Terminal 2: Record stereo + IMU (60-90 seconds)
-ros2 bag record -o imu_calibration \
-  /oak/left/image_raw /oak/right/image_raw /oak/imu/data
+Recording 2: RGB + Stereo + IMU (~4.5 fps, 3-camera sync driver)
+  └── Step 3: 3-camera calibration       → stereo_rgb_imu_calibration_results/calibration.json
+
+Step 4: Merge stereo+IMU calibration with RGB extrinsics → merged_calibration_results/calibration.json
 ```
 
-**IMU recording tips:**
-- Hold still 2-3 seconds at start and end
-- Keep AprilGrid visible in both cameras throughout
-- Include smooth accelerations and decelerations
-- Gyroscope should reach 1-5 rad/s during rotations
+### Create AprilGrid Config
 
-### Step 2: Create AprilGrid Config
+Create the AprilGrid configuration file (measure your own grid — see [AprilGrid Configuration](#aprilgrid-configuration)):
 
 ```bash
-cat > aprilgrid.json << 'EOF'
+cat > $DEV_HOME/basalt_calibration/aprilgrid.json << 'EOF'
 {
     "tagCols": 6,
     "tagRows": 6,
@@ -359,88 +337,36 @@ cat > aprilgrid.json << 'EOF'
 EOF
 ```
 
-### Step 3: Run Camera Calibration
+### Step 1: Stereo Camera Calibration
 
-**3-camera calibration** (Recording A) — use `ds` (double sphere) for the wide-angle IMX577 RGB camera:
+Using Recording 1 (stereo + IMU at 30 fps). Mount the **AprilGrid on a wall** and **move the camera rig** dynamically in front of it.
 
 ```bash
-cd basalt_ros2/build
+cd $DEV_HOME/basalt_ros2/build
 source /opt/ros/jazzy/setup.bash
 
 ./basalt_calibrate \
-  --dataset-path /path/to/cam_calibration/cam_calibration_0.mcap \
+  --dataset-path  $DEV_HOME/basalt_calibration/stereo_imu_calibration_record/stereo_imu_calibration_record_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/oak_results_3cam/ \
-  --cam-types pinhole-radtan8 ds pinhole-radtan8
-```
-
-**Stereo-only calibration** (Recording B) — needed before IMU calibration:
-
-```bash
-./basalt_calibrate \
-  --dataset-path /path/to/imu_calibration/imu_calibration_0.mcap \
-  --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/oak_results_stereo/ \
+  --aprilgrid  $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_results \
   --cam-types pinhole-radtan8 pinhole-radtan8
 ```
 
-### Step 4: In the GUI
+**In the GUI:**
 
 1. Wait for corner detection to complete
-2. Click **"init_cam_intr"** - Initialize camera intrinsics
-3. Click **"init_cam_poses"** - Compute initial poses
-4. Click **"init_cam_extr"** - Initialize extrinsics
-5. Click **"init_opt"** - Initialize optimizer
-6. Check **"opt_until_converge"** - Run optimization until convergence
-7. Wait for convergence (watch reprojection error)
-8. Click **"save_calib"** - Save calibration.json
+2. Click **"init_cam_intr"** → **"init_cam_poses"** → **"init_cam_extr"** → **"init_opt"**
+3. Check **"opt_until_converge"** — wait for convergence
+4. Click **"save_calib"**
 
-### Step 5: Evaluate Results
+**Good calibration:** mean reprojection error < 1.0 pixel (ideal < 0.5).
 
-**Good calibration indicators:**
-- Mean reprojection error: **< 1.0 pixel** (ideal: < 0.5)
-- Converged without warnings
-- Extrinsics match physical camera positions
+### Step 2: IMU Calibration
 
-**If reprojection error is high (>2 pixels):**
-1. Verify AprilGrid measurements with calipers
-2. Try a different camera model
-3. Check for motion blur in images
-4. Ensure AprilGrid is perfectly flat
-5. Re-record with slower movements
+Using the **same Recording 1** and the **same `--result-path`** as Step 1. The stereo `calibration.json` is loaded automatically.
 
----
-
-## Camera + IMU Calibration Workflow
-
-After completing camera calibration and saving `calibration.json`, you can calibrate the camera-IMU extrinsics. This determines the transform between the IMU and cameras (`T_i_c`), which is required for VIO.
-
-### Step 1: Record IMU Calibration Data
-
-**IMPORTANT: You MUST record a separate dataset for IMU calibration.** The camera calibration recording will NOT work because the camera/IMU was stationary (you moved the AprilGrid board). For IMU calibration, you must **move the camera+IMU rig** in front of a **stationary AprilGrid**.
-
-```bash
-ros2 bag record -o imu_calibration_recording \
-    /oak/left/image_raw \
-    /oak/rgb/image_raw \
-    /oak/right/image_raw \
-    /oak/imu/data
-```
-
-**Recording procedure:**
-
-1. Mount the AprilGrid on a **wall or flat surface** (it must stay perfectly still)
-2. Hold the camera rig and stand ~0.3-1.0m from the board
-3. **Move the camera dynamically** - rotate around all 3 axes (pitch, yaw, roll)
-4. Include smooth accelerations and decelerations
-5. Keep the AprilGrid visible in at least one camera most of the time
-6. Duration: 60-120 seconds
-
-**Common mistake:** If you used a tripod-mounted camera and moved the board for camera calibration, you **cannot reuse** that recording for IMU calibration. The IMU must experience dynamic motion (rotations > 30 deg/s) for the calibration to work. You can verify your recording has sufficient motion by checking that gyroscope magnitudes reach 1-5 rad/s during the recording.
-
-### Step 2: Find IMU Noise Parameters
+#### IMU Noise Parameters
 
 The IMU noise parameters come from your IMU's datasheet. They use the [Kalibr continuous-time noise model](https://github.com/ethz-asl/kalibr/wiki/IMU-Noise-Model):
 
@@ -455,95 +381,116 @@ The IMU noise parameters come from your IMU's datasheet. They use the [Kalibr co
 
 | IMU | Gyro Noise | Accel Noise | Gyro Bias | Accel Bias |
 |-----|-----------|-------------|-----------|------------|
-| BNO086 (OAK-FFC-3P) | 0.0005 | 0.02 | 0.0001 | 0.001 |
+| BMI270 (OAK-FFC-3P) | 0.0005 | 0.02 | 0.0001 | 0.001 |
 | BMI160 (TUM-VI/EuRoC) | 0.000282 | 0.016 | 0.0001 | 0.001 |
 | Snapdragon (UZH-FPV) | 0.05 | 0.1 | 4e-5 | 0.002 |
 
-If you don't know your IMU's specs, start with the defaults (BMI160 row) and adjust if needed. The BNO086 outputs calibrated/fused data so its effective noise density is similar to or lower than raw MEMS sensors. **Warning:** Setting `gyro-noise-std` too high (e.g. >0.002) will de-weight gyroscope measurements and prevent the optimizer from constraining rotation dynamics.
+**Warning:** Setting `gyro-noise-std` too high (e.g. >0.002) will de-weight gyroscope measurements and prevent the optimizer from constraining rotation dynamics.
 
-### Step 3: Run IMU Calibration
-
-The `--result-path` **must point to the same folder** where `calibration.json` was saved from camera calibration:
+#### Run
 
 ```bash
-cd basalt_ros2/build
-source /opt/ros/jazzy/setup.bash
-
 ./basalt_calibrate_imu \
-  --dataset-path /path/to/imu_calibration_recording/imu_calibration_recording_0.mcap \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_record/stereo_imu_calibration_record_0.mcap \
   --dataset-type mcap \
-  --aprilgrid /path/to/aprilgrid.json \
-  --result-path ~/oak_calibration_result/ \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_results \
   --gyro-noise-std 0.0005 \
   --accel-noise-std 0.02 \
   --gyro-bias-std 0.0001 \
   --accel-bias-std 0.001
 ```
 
-Example (OAK-FFC-3P with BNO086):
-
-```bash
-./basalt_calibrate_imu \
-  --dataset-path /media/logic/USamsung/oak_calibration/calibration_recording_basalt2/calibration_recording_basalt2_0.mcap \
-  --dataset-type mcap \
-  --aprilgrid /media/logic/USamsung/oak_calibration/aprilgrid_large.json \
-  --result-path /media/logic/USamsung/oak_calibration/oak_results/ \
-  --gyro-noise-std 0.0005 \
-  --accel-noise-std 0.02 \
-  --gyro-bias-std 0.0001 \
-  --accel-bias-std 0.001
-```
-
-### Step 4: In the IMU Calibration GUI
+#### In the GUI
 
 Follow the buttons **in order from left to right**:
 
-1. Click **"load_dataset"** - Load the IMU calibration recording
-2. Click **"detect_corners"** - Detect AprilGrid corners (uses cached results if available)
-3. Click **"init_cam_poses"** - Compute initial camera poses from corners
-4. Click **"init_cam_imu"** - Initialize the rotation between camera and IMU by aligning camera rotation velocities with gyro data
-5. Click **"init_opt"** - Initialize the spline optimization. You should see the IMU data plotted below with the spline overlay
-6. Click **"optimize"** repeatedly or check **"opt_until_converge"** - Run optimization until convergence
+1. Click **"load_dataset"** → **"detect_corners"** → **"init_cam_poses"** → **"init_cam_imu"** → **"init_opt"**
+2. Check **"opt_until_converge"** — wait for convergence
+3. Optionally enable `opt_cam_time_offset` and `opt_imu_scale` for refinement (see table below)
+4. Click **"save_calib"** — updates `calibration.json` with IMU extrinsics
 
-**GUI checkbox settings for optimization:**
+**Optimization checkboxes:**
 
-| Checkbox | Default | When to use |
-|----------|---------|-------------|
-| `opt_intr` | OFF | Leave OFF - camera intrinsics are already calibrated |
-| `opt_poses` | OFF | Can enable for a few iterations to help initialize the spline before switching to corners |
-| `opt_corners` | ON | **Should be ON by default** - this is the primary optimization mode |
-| `opt_cam_time_offset` | OFF | Enable only **after** the main optimization has converged, for refinement |
-| `opt_imu_scale` | OFF | Enable only **after** the main optimization has converged, for refinement |
-| `opt_mocap` | OFF | Only if you have Mocap data (not applicable for most setups) |
+| Checkbox               | Default | When to use                                          |
+|------------------------|---------|------------------------------------------------------|
+| `opt_intr`             | OFF     | Leave OFF — camera intrinsics are already calibrated |
+| `opt_corners`          | ON      | Primary optimization mode                            |
+| `opt_cam_time_offset`  | OFF     | Enable after main convergence for refinement         |
+| `opt_imu_scale`        | OFF     | Enable after main convergence for refinement         |
 
-**Recommended optimization sequence:**
-1. With defaults (`opt_corners` ON, everything else OFF), click **"optimize"** or check **"opt_until_converge"** and wait for convergence
-2. Optionally enable `opt_cam_time_offset` and run a few more iterations for time offset refinement
-3. Optionally enable `opt_imu_scale` and run a few more iterations for IMU scale/misalignment refinement
-4. Click **"save_calib"** to overwrite `calibration.json` with the updated calibration including IMU extrinsics
+#### Evaluate
 
-### Step 5: Evaluate IMU Calibration Results
-
-**In the GUI plots:**
-- `show_accel` / `show_gyro` - Toggle accelerometer/gyroscope data display
-- `show_data` (dashed lines) - Raw IMU measurements
-- `show_spline` (solid lines) - Optimized spline fit
-- The solid spline lines should closely follow the dashed raw data lines when calibration is good
-
-**In the console output:**
-- `T_i_c0`, `T_i_c1`, `T_i_c2` - The IMU-to-camera transforms (should match your physical mounting)
-- `g` vector - Should have norm close to **9.81 m/s²**
-- `accel_bias` and `gyro_bias` - Should be small values
-- Error should decrease and converge
+- **g vector norm** should be close to **9.81 m/s²**
+- **Mean reprojection error** should be < 2 pixels (ideal < 1)
+- **Spline plots** (solid lines) should closely follow raw IMU data (dashed lines)
 
 **If optimization doesn't converge:**
 
-1. **g norm ~1.0 instead of ~9.81, accel_bias absorbing gravity:** Your recording has no IMU motion. You likely moved the AprilGrid board instead of the camera. Record a new dataset where you **move the camera rig** in front of a stationary board.
-2. **Reprojection error >100 pixels:** The `init_cam_imu` step failed (degenerate angular velocity matching). This happens when the recording has near-zero angular velocity. Record with dynamic rotational motion.
-3. Try enabling `opt_poses` for a few iterations first, then switch to `opt_corners`
-4. Verify the AprilGrid is visible and corners are detected in the recording
-5. Check that the camera calibration (`calibration.json`) is good (low reprojection error)
-6. Do NOT inflate `gyro-noise-std` above 0.002 - this de-weights gyro data and prevents rotation estimation
+1. **g norm ~1.0, accel_bias absorbing gravity:** Recording has no IMU motion — you moved the board instead of the camera
+2. **Reprojection error >100 px:** `init_cam_imu` failed — recording has insufficient rotational motion
+3. **Optimizer stuck, wrong camera intrinsics:** Check that `--result-path` points to the stereo calibration, not a 3-camera calibration. The number of cameras in `calibration.json` must match the recording
+4. Do NOT inflate `gyro-noise-std` above 0.002
+
+### Step 3: 3-Camera Calibration (RGB Extrinsics)
+
+Using Recording 2 (all 3 cameras + IMU at ~4.5 fps). This determines the RGB camera's position relative to the stereo pair. Mount camera on tripod, move the **AprilGrid board** slowly in front of the cameras.
+
+Use `ds` (double sphere) for the wide-angle IMX577 RGB camera (113° HFOV), `pinhole-radtan8` for the OV9782 stereo cameras (75° HFOV):
+
+```bash
+./basalt_calibrate \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_record/stereo_rgb_imu_calibration_record_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results \
+  --cam-types pinhole-radtan8 ds pinhole-radtan8
+```
+
+**In the GUI:** Same workflow as Step 1 (init_cam_intr → init_cam_poses → init_cam_extr → init_opt → opt_until_converge → save_calib).
+
+This produces `stereo_rgb_imu_calibration_results/calibration.json` with all 3 camera intrinsics and extrinsics in a common reference frame.
+
+### Step 4: Merge Calibrations
+
+The final step combines the stereo+IMU calibration (Step 2) with the RGB extrinsics (Step 3) into a single calibration file. This computes T_imu_rgb by chaining the transforms:
+
+```text
+T_left_rgb = T_imu_left_3cam⁻¹ × T_imu_rgb_3cam     (from 3-camera calibration)
+T_imu_rgb  = T_imu_left_stereo × T_left_rgb           (into stereo+IMU frame)
+```
+
+```bash
+python3 $DEV_HOME/basalt_ros2/scripts/merge_calibrations.py \
+  --stereo-imu $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
+  --three-cam $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results/calibration.json \
+  --output $DEV_HOME/basalt_calibration/merged_calibration_results/calibration.json
+```
+
+The script validates that the left camera intrinsics agree between both calibrations (sanity check), then produces a merged file with:
+
+| Index | Camera       | Source                                             |
+|-------|--------------|----------------------------------------------------|
+| cam0  | Left stereo  | Intrinsics + T_imu_cam from stereo+IMU (Step 2)    |
+| cam1  | Right stereo | Intrinsics + T_imu_cam from stereo+IMU (Step 2)    |
+| cam2  | RGB          | Intrinsics from 3-cam (Step 3), T_imu_rgb computed |
+
+IMU parameters (bias, noise, time offset) come from the stereo+IMU calibration.
+
+**Important:** For Basalt VIO, use the 2-camera `stereo_imu_calibration_results/calibration.json` directly. The merged 3-camera file is for the photogrammetry pipeline.
+
+### Use Case: Photogrammetry Pipeline
+
+```text
+Runtime:
+  Stereo + IMU → Basalt VIO → continuous T_world_imu at stereo rate
+                                    ↓
+  T_world_rgb = T_world_imu × T_imu_rgb → interpolate to RGB timestamps
+                                    ↓
+  Stereo depth + T_left_rgb → project depth onto RGB frame
+                                    ↓
+  RGB images + accurate poses + depth → photogrammetry / SFM / point cloud
+```
 
 ---
 
@@ -577,8 +524,11 @@ Check if your cameras are hardware synchronized:
 ### depthai-ros Integration
 
 This calibration output is designed to work with:
-- `depthai-ros`: <https://github.com/luxonis/depthai-ros>
+
+- `depthai-ros` (OAK-FFC-3P fork): <https://github.com/roboticsmick/depthai-ros>
 - `depthai-core` BasaltVIO: See `depthai-core/src/basalt/BasaltVIO.cpp`
+
+For recording instructions, driver configs, and calibration-to-DepthAI conversion, see the [depthai-ros README](https://github.com/roboticsmick/depthai-ros).
 
 ### Example VIO Usage (planned)
 
