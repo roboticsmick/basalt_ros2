@@ -2,15 +2,10 @@
 
 A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P camera module.
 
+![Foxglove Basalt ROS2](assets/Foxglove_Basalt_ROS2.png)
+
 ## TO DO
 
-- Basalt computing at 1Hz. Increase to higher frame rate.
-- Add style variables to vio_config and vo_config for keypoint visualisation for /image_annotated topics
-  - #8A00C4 - All optically-tracked features
-  - #ff0083 - VIO-confirmed 3D landmarks
-- Review codebase alignment with NASA coding guidelines /media/logic/USamsung/ros2_ws/src/basalt_ros2/coding_guidelines.md
-- Review codebase to optimise image processing and vio processing
-- Review codebase to optimise memory, queue and buffers management. Check for overflow or accumulation errors
 - Add reliability metric / odom freeze detection
 - Methods for handling poor keyframes environment
 - Calibration only works with pinhole-radtan8 model. Implementation and testing needs to be done for other models.
