@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+
+<!--
+     Launch file for basalt vio
+-->
+
+<launch>
+
+    <!-- ################## Transform Broadcasts ################## -->
+    <node 
+        name="baseToCam" 
+        pkg="tf" 
+        type="static_transform_publisher" 
+        args="0 0 0 0 1.57079 0 base_link camera 100">
+     </node>
+
+    <!-- ###################### Node ##################### -->
+    <node
+        pkg="basalt_ros2"
+        type="visual_odometry_node"
+        name="visual_odomtery_node"
+        clear_params="true"
+        output="screen">
+
+        <param name="imu_topic"         value="/stereo/imu"/>
+        <param name="thread_limit"      value="0"/>
+        <param name="use_double"        value="false"/>
+
+        <param name="vio_config_path"   value="$(find basalt_ros2)/config/vio_config.json"/>
+
+        <!--param name="calibration_path"  value="/home/matt/Projects/vio/basalt_calib/oak_d_mono_result2/calibration.json"/-->
+        <param name="calibration_path"  value="/home/matt/Projects/RangerBot/RangerBot_Data/basalt_calib/oak_d_mono_result2/calibration.json"/>
+        <!--param name="calibration_path"  value="/home/matt/Projects/RangerBot/RangerBot_Data/basalt_calib/oak_d_mono_pin_result/calibration.json"/-->
+        <!--param name="calibration_path"  value="/home/matt/calibration.json"/-->
+    </node>
+
+</launch>
+
+
+

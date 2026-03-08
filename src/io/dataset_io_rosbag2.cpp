@@ -1,0 +1,563 @@
+/**
+BSD 3-Clause License
+
+This file is part of the Basalt project.
+https://gitlab.com/VladyslavUsenko/basalt.git
+
+Copyright (c) 2019, Vladyslav Usenko and Nikolaus Demmel.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#include <basalt/io/dataset_io_rosbag2.h>
+
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <limits>
+#include <set>
+
+#include <rmw/types.h>
+
+namespace basalt {
+
+// Helper function to convert rcutils_uint8_array_t to rclcpp::SerializedMessage
+static rclcpp::SerializedMessage createSerializedMessage(
+    const std::shared_ptr<rcutils_uint8_array_t>& uint8_array) {
+  rcl_serialized_message_t rcl_msg = rmw_get_zero_initialized_serialized_message();
+  rcl_msg.buffer_capacity = uint8_array->buffer_capacity;
+  rcl_msg.buffer_length = uint8_array->buffer_length;
+  rcl_msg.buffer = uint8_array->buffer;
+  rcl_msg.allocator = uint8_array->allocator;
+
+  return rclcpp::SerializedMessage(rcl_msg);
+}
+
+void Rosbag2IO::read(const std::string& path) {
+  if (!fs::exists(path)) {
+    std::cerr << "No dataset found in " << path << std::endl;
+    return;
+  }
+
+  // Detect bag format (MCAP, SQLite3, directory, single file)
+  Rosbag2Info bag_info = Rosbag2Detector::detectBagFormat(path);
+
+  if (bag_info.format == Rosbag2StorageFormat::UNKNOWN) {
+    std::cerr << "Unknown ROS2 bag format at " << path << std::endl;
+    std::cerr << "Supported formats: MCAP (.mcap), SQLite3 (.db3), or "
+                 "directory with metadata.yaml"
+              << std::endl;
+    return;
+  }
+
+  std::cout << "Detected ROS2 bag format: "
+            << Rosbag2Detector::getFormatName(bag_info.format) << " ("
+            << bag_info.storage_id << ")" << std::endl;
+  std::cout << "Storage files: " << bag_info.storage_files.size() << std::endl;
+
+  // Initialize dataset
+  data.reset(new Rosbag2VioDataset);
+
+  // Configure storage options
+  rosbag2_storage::StorageOptions storage_options =
+      createStorageOptions(bag_info);
+  rosbag2_cpp::ConverterOptions converter_options = createConverterOptions();
+
+  // Open bag with sequential reader
+  rosbag2_cpp::readers::SequentialReader reader;
+  try {
+    reader.open(storage_options, converter_options);
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to open ROS2 bag: " << e.what() << std::endl;
+    return;
+  }
+
+  // Discover topics
+  std::set<std::string> cam_topics;
+  std::string imu_topic, mocap_topic, point_topic;
+  discoverTopics(reader, cam_topics, imu_topic, mocap_topic, point_topic);
+
+  std::cout << "imu_topic: " << imu_topic << std::endl;
+  std::cout << "mocap_topic: " << mocap_topic << std::endl;
+  std::cout << "cam_topics: ";
+  for (const std::string& s : cam_topics) std::cout << s << " ";
+  std::cout << std::endl;
+
+  data->num_cams = cam_topics.size();
+
+  // Index all messages (single pass through bag)
+  indexMessages(reader, cam_topics, imu_topic, mocap_topic, point_topic);
+
+  std::cout << "Total images indexed: " << data->image_data_idx.size()
+            << std::endl;
+  std::cout << "Total IMU samples: " << data->accel_data.size() << std::endl;
+  std::cout << "Total mocap poses: " << data->gt_timestamps.size()
+            << std::endl;
+}
+
+rosbag2_storage::StorageOptions Rosbag2IO::createStorageOptions(
+    const Rosbag2Info& bag_info) {
+  rosbag2_storage::StorageOptions storage_options;
+
+  // Set URI (path to bag)
+  storage_options.uri = bag_info.bag_path;
+
+  // Set storage plugin ID
+  storage_options.storage_id = bag_info.storage_id;
+
+  // Performance tuning
+  storage_options.max_bagfile_size = 0;  // No split limit for reading
+  storage_options.max_cache_size = 100 * 1024 * 1024;  // 100 MB cache
+
+  return storage_options;
+}
+
+rosbag2_cpp::ConverterOptions Rosbag2IO::createConverterOptions() {
+  rosbag2_cpp::ConverterOptions converter_options;
+
+  // Use CDR (default ROS2 serialization)
+  converter_options.input_serialization_format = "cdr";
+  converter_options.output_serialization_format = "cdr";
+
+  return converter_options;
+}
+
+void Rosbag2IO::discoverTopics(rosbag2_cpp::readers::SequentialReader& reader,
+                               std::set<std::string>& cam_topics,
+                               std::string& imu_topic,
+                               std::string& mocap_topic,
+                               std::string& point_topic) {
+  auto topics_and_types = reader.get_all_topics_and_types();
+
+  for (const auto& topic_metadata : topics_and_types) {
+    const std::string& topic = topic_metadata.name;
+    const std::string& type = topic_metadata.type;
+
+    // Camera topics
+    if (type == "sensor_msgs/msg/Image") {
+      cam_topics.insert(topic);
+    }
+    // IMU topic (exclude FCU topics)
+    else if (type == "sensor_msgs/msg/Imu") {
+      if (topic.rfind("/fcu", 0) != 0) {
+        if (imu_topic.empty()) {
+          imu_topic = topic;
+        }
+      }
+    }
+    // Mocap/Ground truth topics
+    else if (type == "geometry_msgs/msg/TransformStamped" ||
+             type == "geometry_msgs/msg/PoseStamped") {
+      if (mocap_topic.empty()) {
+        mocap_topic = topic;
+      }
+    }
+    // Point tracking
+    else if (type == "geometry_msgs/msg/PointStamped") {
+      if (point_topic.empty()) {
+        point_topic = topic;
+      }
+    }
+  }
+}
+
+void Rosbag2IO::indexMessages(rosbag2_cpp::readers::SequentialReader& reader,
+                              const std::set<std::string>& cam_topics,
+                              const std::string& imu_topic,
+                              const std::string& mocap_topic,
+                              const std::string& point_topic) {
+  // Create topic to camera ID mapping
+  std::map<std::string, int> topic_to_id;
+  int idx = 0;
+  std::cout << "\n=== Camera Topic Mapping ===" << std::endl;
+  for (const std::string& topic : cam_topics) {
+    topic_to_id[topic] = idx;
+    std::cout << "  Camera " << idx << ": " << topic << std::endl;
+    idx++;
+  }
+  std::cout << "===========================\n" << std::endl;
+
+  int64_t min_time = std::numeric_limits<int64_t>::max();
+  int64_t max_time = std::numeric_limits<int64_t>::min();
+
+  std::vector<geometry_msgs::msg::TransformStamped::SharedPtr> mocap_msgs;
+  std::vector<geometry_msgs::msg::PointStamped::SharedPtr> point_msgs;
+
+  std::vector<int64_t> system_to_imu_offset_vec;
+  std::vector<int64_t> system_to_mocap_offset_vec;
+
+  std::set<int64_t> image_timestamps_set;
+
+  // Timestamp synchronization tolerance (5ms = 5,000,000 ns)
+  // Images within this tolerance will be grouped together
+  const int64_t SYNC_TOLERANCE_NS = 5000000;
+
+  // Helper to find or create synchronized timestamp
+  auto findSyncTimestamp = [&](int64_t timestamp_ns) -> int64_t {
+    // Look for an existing timestamp within tolerance
+    auto it = image_timestamps_set.lower_bound(timestamp_ns - SYNC_TOLERANCE_NS);
+    if (it != image_timestamps_set.end() &&
+        std::abs(*it - timestamp_ns) <= SYNC_TOLERANCE_NS) {
+      return *it;  // Use existing synchronized timestamp
+    }
+    // No existing timestamp found, this becomes a new sync point
+    return timestamp_ns;
+  };
+
+  int num_msgs = 0;
+
+  // Iterate through all messages
+  while (reader.has_next()) {
+    auto bag_message = reader.read_next();
+    const std::string& topic = bag_message->topic_name;
+
+    // Process camera images (lazy load - store serialized message)
+    if (cam_topics.find(topic) != cam_topics.end()) {
+      // Deserialize header to get timestamp
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      auto img_msg =
+          deserializeMessage<sensor_msgs::msg::Image>(serialized_msg);
+
+      if (img_msg) {
+        int64_t raw_timestamp_ns =
+            rclcpp::Time(img_msg->header.stamp).nanoseconds();
+
+        // Find or create synchronized timestamp (group images within tolerance)
+        int64_t sync_timestamp_ns = findSyncTimestamp(raw_timestamp_ns);
+
+        // Store serialized message for lazy loading
+        auto& img_vec = data->image_data_idx[sync_timestamp_ns];
+        if (img_vec.size() == 0) {
+          img_vec.resize(data->num_cams);
+        }
+
+        img_vec[topic_to_id.at(topic)] =
+            Rosbag2VioDataset::SerializedMessageData{
+                std::make_shared<rclcpp::SerializedMessage>(
+                    createSerializedMessage(bag_message->serialized_data)),
+                "sensor_msgs/msg/Image"};
+
+        image_timestamps_set.insert(sync_timestamp_ns);
+        min_time = std::min(min_time, raw_timestamp_ns);
+        max_time = std::max(max_time, raw_timestamp_ns);
+      }
+    }
+
+    // Process IMU data (extract immediately)
+    else if (topic == imu_topic) {
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      auto imu_msg = deserializeMessage<sensor_msgs::msg::Imu>(serialized_msg);
+
+      if (imu_msg) {
+        int64_t time = rclcpp::Time(imu_msg->header.stamp).nanoseconds();
+
+        data->accel_data.emplace_back();
+        data->accel_data.back().timestamp_ns = time;
+        data->accel_data.back().data =
+            Eigen::Vector3d(imu_msg->linear_acceleration.x,
+                            imu_msg->linear_acceleration.y,
+                            imu_msg->linear_acceleration.z);
+
+        data->gyro_data.emplace_back();
+        data->gyro_data.back().timestamp_ns = time;
+        data->gyro_data.back().data = Eigen::Vector3d(
+            imu_msg->angular_velocity.x, imu_msg->angular_velocity.y,
+            imu_msg->angular_velocity.z);
+
+        min_time = std::min(min_time, time);
+        max_time = std::max(max_time, time);
+
+        // Track time offset
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
+        system_to_imu_offset_vec.push_back(time - msg_arrival_time);
+      }
+    }
+
+    // Process mocap data
+    else if (topic == mocap_topic) {
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      // Try TransformStamped first
+      auto transform_msg =
+          deserializeMessage<geometry_msgs::msg::TransformStamped>(serialized_msg);
+
+      if (transform_msg) {
+        mocap_msgs.push_back(transform_msg);
+        int64_t time =
+            rclcpp::Time(transform_msg->header.stamp).nanoseconds();
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
+        system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
+      } else {
+        // Try PoseStamped
+        auto pose_msg = deserializeMessage<geometry_msgs::msg::PoseStamped>(serialized_msg);
+
+        if (pose_msg) {
+          // Convert PoseStamped to TransformStamped
+          auto transform_msg =
+              std::make_shared<geometry_msgs::msg::TransformStamped>();
+          transform_msg->header = pose_msg->header;
+          transform_msg->transform.rotation = pose_msg->pose.orientation;
+          transform_msg->transform.translation.x = pose_msg->pose.position.x;
+          transform_msg->transform.translation.y = pose_msg->pose.position.y;
+          transform_msg->transform.translation.z = pose_msg->pose.position.z;
+
+          mocap_msgs.push_back(transform_msg);
+          int64_t time = rclcpp::Time(pose_msg->header.stamp).nanoseconds();
+          int64_t msg_arrival_time = bag_message->recv_timestamp;
+          system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
+        }
+      }
+    }
+
+    // Process point data
+    else if (topic == point_topic) {
+      auto serialized_msg = createSerializedMessage(bag_message->serialized_data);
+      auto point_msg = deserializeMessage<geometry_msgs::msg::PointStamped>(serialized_msg);
+
+      if (point_msg) {
+        point_msgs.push_back(point_msg);
+        int64_t time = rclcpp::Time(point_msg->header.stamp).nanoseconds();
+        int64_t msg_arrival_time = bag_message->recv_timestamp;
+        system_to_mocap_offset_vec.push_back(time - msg_arrival_time);
+      }
+    }
+
+    num_msgs++;
+  }
+
+  // Convert image timestamps set to vector
+  data->image_timestamps.assign(image_timestamps_set.begin(),
+                                image_timestamps_set.end());
+
+  // Count how many frames have all cameras synchronized
+  size_t fully_synced_frames = 0;
+  for (const auto& kv : data->image_data_idx) {
+    bool all_cams_present = true;
+    for (const auto& opt : kv.second) {
+      if (!opt.has_value()) {
+        all_cams_present = false;
+        break;
+      }
+    }
+    if (all_cams_present) fully_synced_frames++;
+  }
+  std::cout << "Synchronized frames (all " << data->num_cams << " cameras): "
+            << fully_synced_frames << "/" << data->image_timestamps.size()
+            << " (tolerance: " << SYNC_TOLERANCE_NS / 1000000.0 << "ms)" << std::endl;
+
+  // Calculate mocap-to-IMU offset (median)
+  if (!system_to_mocap_offset_vec.empty() &&
+      !system_to_imu_offset_vec.empty()) {
+    int64_t system_to_imu_offset =
+        system_to_imu_offset_vec[system_to_imu_offset_vec.size() / 2];
+    int64_t system_to_mocap_offset =
+        system_to_mocap_offset_vec[system_to_mocap_offset_vec.size() / 2];
+    data->mocap_to_imu_offset_ns =
+        system_to_imu_offset - system_to_mocap_offset;
+  }
+
+  // Process mocap poses
+  data->gt_pose_data.clear();
+  data->gt_timestamps.clear();
+
+  if (!mocap_msgs.empty()) {
+    for (size_t i = 0; i < mocap_msgs.size() - 1; i++) {
+      auto mocap_msg = mocap_msgs[i];
+
+      int64_t time = rclcpp::Time(mocap_msg->header.stamp).nanoseconds();
+
+      Eigen::Quaterniond q(mocap_msg->transform.rotation.w,
+                          mocap_msg->transform.rotation.x,
+                          mocap_msg->transform.rotation.y,
+                          mocap_msg->transform.rotation.z);
+
+      Eigen::Vector3d t(mocap_msg->transform.translation.x,
+                       mocap_msg->transform.translation.y,
+                       mocap_msg->transform.translation.z);
+
+      int64_t timestamp_ns = time + data->mocap_to_imu_offset_ns;
+      data->gt_timestamps.emplace_back(timestamp_ns);
+      data->gt_pose_data.emplace_back(q, t);
+    }
+  }
+
+  // Process point data
+  if (!point_msgs.empty()) {
+    for (size_t i = 0; i < point_msgs.size() - 1; i++) {
+      auto point_msg = point_msgs[i];
+
+      int64_t time = rclcpp::Time(point_msg->header.stamp).nanoseconds();
+
+      Eigen::Vector3d t(point_msg->point.x, point_msg->point.y,
+                       point_msg->point.z);
+
+      int64_t timestamp_ns = time;  // No offset for point data
+      data->gt_timestamps.emplace_back(timestamp_ns);
+      data->gt_pose_data.emplace_back(Sophus::SO3d(), t);
+    }
+  }
+
+  std::cout << "Total messages processed: " << num_msgs << std::endl;
+  std::cout << "Time range: " << min_time << " to " << max_time << std::endl;
+  std::cout << "Mocap-to-IMU offset: " << data->mocap_to_imu_offset_ns << " ns"
+            << std::endl;
+}
+
+template <typename T>
+typename T::SharedPtr Rosbag2IO::deserializeMessage(
+    const rclcpp::SerializedMessage& serialized_msg) {
+  rclcpp::Serialization<T> serializer;
+  auto msg = std::make_shared<T>();
+
+  try {
+    serializer.deserialize_message(&serialized_msg, msg.get());
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to deserialize message: " << e.what() << std::endl;
+    return nullptr;
+  }
+
+  return msg;
+}
+
+// Lazy image loading implementation
+std::vector<ImageData> Rosbag2VioDataset::get_image_data(int64_t t_ns) {
+  std::vector<ImageData> res(num_cams);
+
+  auto it = image_data_idx.find(t_ns);
+  if (it == image_data_idx.end()) {
+    return res;
+  }
+
+  for (size_t i = 0; i < num_cams; i++) {
+    if (!it->second[i].has_value()) continue;
+
+    ImageData& id = res[i];
+
+    // Deserialize image message
+    std::lock_guard<std::mutex> lock(m);
+
+    rclcpp::Serialization<sensor_msgs::msg::Image> serializer;
+    auto img_msg = std::make_shared<sensor_msgs::msg::Image>();
+    serializer.deserialize_message(it->second[i]->serialized_msg.get(),
+                                   img_msg.get());
+
+    // Allocate image buffer
+    id.img.reset(new ManagedImage<uint16_t>(img_msg->width, img_msg->height));
+
+    // Extract exposure from frame_id if available
+    if (!img_msg->header.frame_id.empty() &&
+        std::isdigit(img_msg->header.frame_id[0])) {
+      id.exposure = std::stol(img_msg->header.frame_id) * 1e-9;
+    } else {
+      id.exposure = -1;
+    }
+
+    // Convert image data based on encoding
+    // Note: For multi-channel formats, we respect the row stride (step) field
+    // to handle images with row padding correctly.
+    const uint32_t width = img_msg->width;
+    const uint32_t height = img_msg->height;
+    const uint32_t step = img_msg->step;
+
+    if (img_msg->encoding == "mono8") {
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          int val = row_in[col];
+          row_out[col] = val << 8;  // Scale to 16-bit
+        }
+      }
+
+    } else if (img_msg->encoding == "mono16") {
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      for (uint32_t row = 0; row < height; row++) {
+        std::memcpy(data_out + row * width,
+                    data_in + row * step,
+                    width * sizeof(uint16_t));
+      }
+
+    } else if (img_msg->encoding == "bgr8" || img_msg->encoding == "rgb8") {
+      // Convert BGR8/RGB8 to grayscale using luminosity method
+      // Y = 0.299*R + 0.587*G + 0.114*B
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      bool is_bgr = (img_msg->encoding == "bgr8");
+
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          size_t idx = col * 3;
+          uint8_t b = row_in[idx + (is_bgr ? 0 : 2)];
+          uint8_t g = row_in[idx + 1];
+          uint8_t r = row_in[idx + (is_bgr ? 2 : 0)];
+
+          int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+          row_out[col] = gray << 8;  // Scale to 16-bit
+        }
+      }
+
+    } else if (img_msg->encoding == "bgra8" || img_msg->encoding == "rgba8") {
+      // Convert BGRA8/RGBA8 to grayscale (ignore alpha channel)
+      const uint8_t* data_in = img_msg->data.data();
+      uint16_t* data_out = id.img->ptr;
+
+      bool is_bgr = (img_msg->encoding == "bgra8");
+
+      for (uint32_t row = 0; row < height; row++) {
+        const uint8_t* row_in = data_in + row * step;
+        uint16_t* row_out = data_out + row * width;
+        for (uint32_t col = 0; col < width; col++) {
+          size_t idx = col * 4;
+          uint8_t b = row_in[idx + (is_bgr ? 0 : 2)];
+          uint8_t g = row_in[idx + 1];
+          uint8_t r = row_in[idx + (is_bgr ? 2 : 0)];
+
+          int gray = static_cast<int>(0.299f * r + 0.587f * g + 0.114f * b);
+          row_out[col] = gray << 8;  // Scale to 16-bit
+        }
+      }
+
+    } else {
+      std::cerr << "Encoding " << img_msg->encoding << " is not supported."
+                << std::endl;
+      std::cerr << "Supported encodings: mono8, mono16, bgr8, rgb8, bgra8, rgba8"
+                << std::endl;
+      std::abort();
+    }
+  }
+
+  return res;
+}
+
+}  // namespace basalt
