@@ -124,6 +124,8 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(yaml-cpp REQUIRED)
+message(STATUS "Found yaml-cpp ${yaml-cpp_VERSION}")
 
 find_package(rosbag2_compression QUIET)
 if(rosbag2_compression_FOUND)
@@ -230,6 +232,7 @@ target_include_directories(basalt PUBLIC
 target_link_libraries(basalt
   PUBLIC  ${STD_CXX_FS} basalt::opencv basalt::basalt-headers TBB::tbb
   PRIVATE basalt::magic_enum rosbag apriltag opengv nlohmann::json fmt::fmt
+          yaml-cpp
           ${rosbag2_cpp_LIBRARIES}
           ${rosbag2_storage_LIBRARIES}
           ${rosbag2_storage_default_plugins_LIBRARIES}
@@ -312,7 +315,7 @@ ament_target_dependencies(visual_odometry_node
   cv_bridge
 )
 
-target_link_libraries(visual_odometry_node basalt_ros2_lib fmt::fmt TBB::tbb)
+target_link_libraries(visual_odometry_node basalt_ros2_lib fmt::fmt TBB::tbb yaml-cpp)
 
 ##################################################
 #################### INSTALL ####################

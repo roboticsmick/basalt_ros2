@@ -106,6 +106,9 @@ struct VioConfig {
   bool mapper_use_lm;
   double mapper_lm_lambda_min;
   double mapper_lm_lambda_max;
+
+ private:
+  void loadFromYAML(const std::string& filename);
 };
 
 }  // namespace basalt

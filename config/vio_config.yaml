@@ -1,0 +1,46 @@
+# basalt_ros2 VIO Configuration
+# Format: plain YAML (no "config." prefix, no "value0" wrapper)
+# Use with: ros2 run basalt_ros2 visual_odometry_node --ros-args -p config_path:=.../vio_config.yaml
+
+# == Optical Flow Parameters ==
+optical_flow_type: frame_to_frame           # Frame-to-frame LK tracker (single scale)
+optical_flow_detection_grid_size: 40        # Cell size in pixels for keypoint detection (smaller = denser)
+optical_flow_max_recovered_dist2: 0.04      # Max squared distance for recovered features
+optical_flow_pattern: 51                    # 51-point pattern for feature descriptor
+optical_flow_max_iterations: 5              # Lucas-Kanade iterations per level
+optical_flow_levels: 3                      # Pyramid levels for multi-scale tracking
+optical_flow_epipolar_error: 0.005          # Max epipolar error for stereo matching
+optical_flow_skip_frames: 1                 # Process every Nth frame (1 = all frames)
+
+# == VIO Solver Type ==
+vio_linearization_type: ABS_QR              # Absolute QR or ABS_SC or REL_SC
+vio_sqrt_marg: true                         # Use square-root marginalization
+
+# == VIO State Management ==
+vio_max_states: 3                           # Max sliding window states
+vio_max_kfs: 7                              # Max keyframes retained
+vio_min_frames_after_kf: 5                  # Frames before next keyframe allowed
+vio_new_kf_keypoints_thresh: 0.7            # Keyframe threshold (fraction of max tracked)
+
+# == VIO Tuning ==
+vio_debug: false                            # Enable debug output (expensive)
+vio_extended_logging: false                 # Extended logging for analysis
+vio_max_iterations: 7                       # Solver iterations per frame
+vio_obs_std_dev: 0.5                        # Observation noise std dev (pixels)
+vio_obs_huber_thresh: 1.0                   # Huber loss threshold
+vio_min_triangulation_dist: 0.05            # Min baseline for landmark triangulation
+vio_enforce_realtime: false                 # Drop frames if VIO falls behind
+
+# == Levenberg-Marquardt Damping ==
+vio_lm_lambda_initial: 1.0e-4               # Initial LM damping parameter
+vio_lm_lambda_min: 1.0e-6                   # Min damping (most trust in model)
+vio_lm_lambda_max: 1.0e2                    # Max damping (most trust in gradient)
+
+# == Initialization Priors ==
+vio_init_pose_weight: 1.0e8                 # Prior weight for initial pose
+vio_init_ba_weight: 1.0e1                   # Prior weight for accelerometer bias
+vio_init_bg_weight: 1.0e2                   # Prior weight for gyroscope bias
+
+# == Marginalization ==
+vio_marg_lost_landmarks: true               # Marginalize landmarks with lost tracks
+vio_kf_marg_feature_ratio: 0.1              # Ratio of features to marginalize at KF

@@ -41,6 +41,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cereal/archives/json.hpp>
 #include <cereal/cereal.hpp>
 #include <magic_enum.hpp>
+#include <yaml-cpp/yaml.h>
 
 namespace basalt {
 
@@ -95,6 +96,15 @@ void VioConfig::save(const std::string& filename) {
 }
 
 void VioConfig::load(const std::string& filename) {
+  // Detect extension: .yaml/.yml → YAML loader, otherwise → JSON loader
+  auto ends_with = [](const std::string& s, const std::string& sfx) {
+    return s.size() >= sfx.size() &&
+           s.compare(s.size() - sfx.size(), sfx.size(), sfx) == 0;
+  };
+  if (ends_with(filename, ".yaml") || ends_with(filename, ".yml")) {
+    loadFromYAML(filename);
+    return;
+  }
   std::ifstream is(filename);
 
   {
@@ -103,6 +113,65 @@ void VioConfig::load(const std::string& filename) {
   }
   is.close();
 }
+void VioConfig::loadFromYAML(const std::string& filename) {
+  YAML::Node root = YAML::LoadFile(filename);
+
+  // Optical flow parameters
+  optical_flow_type = root["optical_flow_type"].as<std::string>(optical_flow_type);
+  optical_flow_detection_grid_size =
+      root["optical_flow_detection_grid_size"].as<int>(optical_flow_detection_grid_size);
+  optical_flow_max_recovered_dist2 =
+      root["optical_flow_max_recovered_dist2"].as<float>(optical_flow_max_recovered_dist2);
+  optical_flow_pattern = root["optical_flow_pattern"].as<int>(optical_flow_pattern);
+  optical_flow_max_iterations =
+      root["optical_flow_max_iterations"].as<int>(optical_flow_max_iterations);
+  optical_flow_levels = root["optical_flow_levels"].as<int>(optical_flow_levels);
+  optical_flow_epipolar_error =
+      root["optical_flow_epipolar_error"].as<float>(optical_flow_epipolar_error);
+  optical_flow_skip_frames =
+      root["optical_flow_skip_frames"].as<int>(optical_flow_skip_frames);
+
+  // VIO solver type (string → enum via magic_enum)
+  if (root["vio_linearization_type"]) {
+    std::string name = root["vio_linearization_type"].as<std::string>();
+    auto lin_enum = magic_enum::enum_cast<LinearizationType>(name);
+    if (lin_enum.has_value()) {
+      vio_linearization_type = lin_enum.value();
+    } else {
+      std::cerr << "Unknown vio_linearization_type: " << name
+                << " — using default" << std::endl;
+    }
+  }
+
+  vio_sqrt_marg = root["vio_sqrt_marg"].as<bool>(vio_sqrt_marg);
+  vio_max_states = root["vio_max_states"].as<int>(vio_max_states);
+  vio_max_kfs = root["vio_max_kfs"].as<int>(vio_max_kfs);
+  vio_min_frames_after_kf =
+      root["vio_min_frames_after_kf"].as<int>(vio_min_frames_after_kf);
+  vio_new_kf_keypoints_thresh =
+      root["vio_new_kf_keypoints_thresh"].as<float>(vio_new_kf_keypoints_thresh);
+  vio_debug = root["vio_debug"].as<bool>(vio_debug);
+  vio_extended_logging = root["vio_extended_logging"].as<bool>(vio_extended_logging);
+  vio_max_iterations = root["vio_max_iterations"].as<int>(vio_max_iterations);
+  vio_obs_std_dev = root["vio_obs_std_dev"].as<double>(vio_obs_std_dev);
+  vio_obs_huber_thresh = root["vio_obs_huber_thresh"].as<double>(vio_obs_huber_thresh);
+  vio_min_triangulation_dist =
+      root["vio_min_triangulation_dist"].as<double>(vio_min_triangulation_dist);
+  vio_enforce_realtime = root["vio_enforce_realtime"].as<bool>(vio_enforce_realtime);
+  vio_lm_lambda_initial =
+      root["vio_lm_lambda_initial"].as<double>(vio_lm_lambda_initial);
+  vio_lm_lambda_min = root["vio_lm_lambda_min"].as<double>(vio_lm_lambda_min);
+  vio_lm_lambda_max = root["vio_lm_lambda_max"].as<double>(vio_lm_lambda_max);
+  vio_init_pose_weight =
+      root["vio_init_pose_weight"].as<double>(vio_init_pose_weight);
+  vio_init_ba_weight = root["vio_init_ba_weight"].as<double>(vio_init_ba_weight);
+  vio_init_bg_weight = root["vio_init_bg_weight"].as<double>(vio_init_bg_weight);
+  vio_marg_lost_landmarks =
+      root["vio_marg_lost_landmarks"].as<bool>(vio_marg_lost_landmarks);
+  vio_kf_marg_feature_ratio =
+      root["vio_kf_marg_feature_ratio"].as<double>(vio_kf_marg_feature_ratio);
+}
+
 }  // namespace basalt
 
 namespace cereal {

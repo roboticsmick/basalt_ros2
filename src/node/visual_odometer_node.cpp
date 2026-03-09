@@ -24,6 +24,7 @@
 #include <cereal/archives/json.hpp>
 #include <cereal/cereal.hpp>
 #include <nlohmann/json.hpp>
+#include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <cv_bridge/cv_bridge.hpp>
 #include <opencv2/imgproc.hpp>
@@ -145,6 +146,96 @@ Calibration<double> loadCalibrationFromJSON(const std::string& calib_path) {
   }
 }
 
+// Helper function to load calibration from YAML file
+Calibration<double> loadCalibrationFromYAML(const std::string& calib_path) {
+  Calibration<double> calib;
+
+  try {
+    YAML::Node root = YAML::LoadFile(calib_path);
+
+    // Load T_imu_cam transforms (IMU to camera extrinsics)
+    if (!root["T_imu_cam"]) {
+      throw std::runtime_error("Missing 'T_imu_cam' in calibration YAML");
+    }
+
+    for (const auto& tf : root["T_imu_cam"]) {
+      // Extract translation
+      Eigen::Vector3d translation(
+          tf["px"].as<double>(),
+          tf["py"].as<double>(),
+          tf["pz"].as<double>());
+
+      // Extract quaternion (xyzw order)
+      Eigen::Quaterniond quat(
+          tf["qw"].as<double>(),  // w
+          tf["qx"].as<double>(),  // x
+          tf["qy"].as<double>(),  // y
+          tf["qz"].as<double>()); // z
+
+      Sophus::SE3d T_imu_cam = Sophus::SE3d(quat, translation);
+      calib.T_i_c.emplace_back(T_imu_cam);
+    }
+
+    // Load camera intrinsics
+    if (!root["intrinsics"]) {
+      throw std::runtime_error("Missing 'intrinsics' in calibration YAML");
+    }
+
+    for (const auto& cam_node : root["intrinsics"]) {
+      std::string cam_type = cam_node["camera_type"].as<std::string>();
+
+      // Extract intrinsic parameters
+      const auto& intr_params = cam_node["intrinsics"];
+      double fx = intr_params["fx"].as<double>();
+      double fy = intr_params["fy"].as<double>();
+      double cx = intr_params["cx"].as<double>();
+      double cy = intr_params["cy"].as<double>();
+
+      GenericCamera<double> cam;
+
+      if (cam_type == "pinhole-radtan8") {
+        // Pinhole with radtan8 distortion (12 parameters)
+        // Order: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6
+        Eigen::Matrix<double, 12, 1> radtan8_params;
+        radtan8_params << fx, fy, cx, cy,
+                         intr_params["k1"].as<double>(),
+                         intr_params["k2"].as<double>(),
+                         intr_params["p1"].as<double>(),
+                         intr_params["p2"].as<double>(),
+                         intr_params["k3"].as<double>(),
+                         intr_params["k4"].as<double>(),
+                         intr_params["k5"].as<double>(),
+                         intr_params["k6"].as<double>();
+        PinholeRadtan8Camera<double> radtan8_cam(radtan8_params);
+        cam.variant = radtan8_cam;
+      } else if (cam_type == "pinhole") {
+        // Standard pinhole model (4 parameters): fx, fy, cx, cy
+        Eigen::Matrix<double, 4, 1> pinhole_params;
+        pinhole_params << fx, fy, cx, cy;
+        PinholeCamera<double> pinhole_cam(pinhole_params);
+        cam.variant = pinhole_cam;
+      } else {
+        throw std::runtime_error("Unsupported camera type: " + cam_type);
+      }
+
+      calib.intrinsics.emplace_back(cam);
+    }
+
+    // Load resolution if available
+    if (root["resolution"] && root["resolution"].IsSequence()) {
+      for (const auto& res : root["resolution"]) {
+        if (res.IsSequence() && res.size() >= 2) {
+          calib.resolution.emplace_back(res[0].as<int>(), res[1].as<int>());
+        }
+      }
+    }
+
+    return calib;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Failed to load calibration YAML: ") + e.what());
+  }
+}
+
 VisualOdometerNode::VisualOdometerNode(const rclcpp::NodeOptions& options)
     : rclcpp::Node("basalt_vio_node", options), is_initialized_(false) {
   RCLCPP_INFO(get_logger(), "Creating basalt_vio_node...");
@@ -243,7 +334,14 @@ void VisualOdometerNode::initializeAsync() {
     Calibration<double> calib;
     if (!calib_path.empty()) {
       try {
-        calib = loadCalibrationFromJSON(calib_path);
+        // Detect extension: .yaml/.yml → YAML loader, otherwise → JSON loader
+        auto ends_with = [](const std::string& s, const std::string& sfx) {
+          return s.size() >= sfx.size() &&
+                 s.compare(s.size() - sfx.size(), sfx.size(), sfx) == 0;
+        };
+        const bool is_yaml = ends_with(calib_path, ".yaml") || ends_with(calib_path, ".yml");
+        calib = is_yaml ? loadCalibrationFromYAML(calib_path)
+                        : loadCalibrationFromJSON(calib_path);
         RCLCPP_INFO(get_logger(), "Successfully loaded calibration from: %s", calib_path.c_str());
         RCLCPP_INFO(get_logger(), "Loaded %lu camera(s) and %lu IMU-camera transform(s)",
                     calib.intrinsics.size(), calib.T_i_c.size());
