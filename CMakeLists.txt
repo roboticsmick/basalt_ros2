@@ -318,6 +318,51 @@ ament_target_dependencies(visual_odometry_node
 target_link_libraries(visual_odometry_node basalt_ros2_lib fmt::fmt TBB::tbb yaml-cpp)
 
 ##################################################
+######## ROS2 COMPOSABLE NODES LIBRARY ###########
+
+add_library(basalt_ros2_components SHARED
+  src/node/visual_odometer_node.cpp
+  src/node/visual_odometer_component.cpp
+  src/node/calibration_publisher_node.cpp
+  src/node/calibration_publisher_component.cpp
+  src/device/ros_camera.cpp
+  src/device/ros_imu.cpp
+)
+
+target_include_directories(basalt_ros2_components PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(basalt_ros2_components
+  rclcpp
+  rclcpp_components
+  nav_msgs
+  sensor_msgs
+  geometry_msgs
+  std_msgs
+  tf2
+  tf2_ros
+  tf2_eigen
+  image_transport
+  message_filters
+  cv_bridge
+)
+
+target_link_libraries(basalt_ros2_components basalt fmt::fmt TBB::tbb yaml-cpp ${OpenCV_LIBRARIES})
+
+# Register both composable nodes
+rclcpp_components_register_nodes(basalt_ros2_components
+  PLUGIN "basalt::VisualOdometerNode"
+  EXECUTABLE visual_odometry_node_composable
+)
+
+rclcpp_components_register_nodes(basalt_ros2_components
+  PLUGIN "basalt::CalibrationPublisherNode"
+  EXECUTABLE calibration_publisher_composable
+)
+
+##################################################
 #################### INSTALL ####################
 
 install(TARGETS visual_odometry_node
@@ -330,7 +375,7 @@ if(BASALT_BUILD_CALIBRATION_TOOLS)
   )
 endif()
 
-install(TARGETS basalt basalt_ros2_lib
+install(TARGETS basalt basalt_ros2_lib basalt_ros2_components
   EXPORT basalt_ros2Targets
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

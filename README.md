@@ -53,8 +53,8 @@ ros2 launch depthai_ros_driver driver.launch.py \
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
-  -p config_path:=/path/to/basalt_ros2/config/vio_config.json \
+  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.yaml \
+  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/ros1_vio_config.yaml \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
   -p right_image_topic:=/oak/right/image_raw \
@@ -83,10 +83,11 @@ The VIO node is tuned via a JSON config file passed at launch. Two pre-tuned con
 Pass the `config_path` parameter at launch:
 
 ```bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
-  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/vio_config.json \
+  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.yaml \
+  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/ros1_vio_config.yaml \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
   -p right_image_topic:=/oak/right/image_raw \

@@ -93,6 +93,3 @@ class VisualOdometerNode : public rclcpp::Node {
 };
 
 }  // namespace basalt
-
-#include <rclcpp_components/register_node_macro.hpp>
-RCLCPP_COMPONENTS_REGISTER_NODE(basalt::VisualOdometerNode)
