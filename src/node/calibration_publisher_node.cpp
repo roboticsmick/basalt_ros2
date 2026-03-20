@@ -188,8 +188,8 @@ CalibrationPublisherNode::CalibrationPublisherNode(const rclcpp::NodeOptions& op
 
   // Declare parameters
   declare_parameter<std::string>("calib_path", "");
-  declare_parameter<std::string>("left_camera_info_topic", "/oak/left/camera_info");
-  declare_parameter<std::string>("right_camera_info_topic", "/oak/right/camera_info");
+  declare_parameter<std::string>("left_camera_info_topic", "/basalt/left/camera_info");
+  declare_parameter<std::string>("right_camera_info_topic", "/basalt/right/camera_info");
   declare_parameter<int>("publish_interval_hz", 10);
 
   // Schedule async initialization
@@ -310,8 +310,9 @@ void CalibrationPublisherNode::initializeAsync() {
     std::copy(R2.ptr<double>(), R2.ptr<double>() + 9, right_info_msg_.r.begin());
     std::copy(P2.ptr<double>(), P2.ptr<double>() + 12, right_info_msg_.p.begin());
 
-    // Create publishers with transient_local QoS so late subscribers get the value
-    auto qos = rclcpp::QoS(1).transient_local();
+    // Create publishers with SystemDefaultsQoS (RELIABLE+VOLATILE) for compatibility
+    // with image_proc::RectifyNode (which subscribes with default VOLATILE durability)
+    auto qos = rclcpp::SystemDefaultsQoS();
     left_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(left_topic, qos);
     right_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(right_topic, qos);
 
