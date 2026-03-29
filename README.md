@@ -6,13 +6,6 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
 
 ## TO DO
 
-- Add reliability metric / odom freeze detection
-- Methods for handling poor keyframes environment
-- Calibration only works with pinhole-radtan8 model. Implementation and testing needs to be done for other models.
-- Update calibration to export calibration file as yaml instead of json
-- Update vio library to work with yaml instead of json format
-- Update vio_config and vo_config to yaml instead of json format
-- Remove unused scripts and libraries from basalt and basalt-ros libraries that are not used in ros2 implementation
 - Add doxygen comments to libraries
 - All files, classes, and public functions must include Doxygen documentation for clear parameter and function definitions.
   - Use `@brief` for one-line summaries
@@ -35,6 +28,13 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
         // ...
     };
     ```
+
+- Add reliability metric / odom freeze detection
+- Methods for handling poor keyframes environment
+- Calibration only works with pinhole-radtan8 model. Implementation and testing needs to be done for other models.
+- Update calibration to export calibration file as yaml instead of json
+- Remove unused scripts and libraries from basalt and basalt-ros libraries that are not used in ros2 implementation
+- 3D point cloud is visualised in foxglove. Remove Basalt GUI testing environment as not used.
 
 ---
 
