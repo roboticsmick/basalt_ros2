@@ -38,6 +38,214 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
 
 ---
 
+## Build
+
+Source ROS2 before any build:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+```
+
+### VIO node (standard build)
+
+Builds the visual odometry node and all ROS2 components. Calibration tools and Pangolin GUI are excluded by default for faster builds.
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+colcon build --packages-select basalt_ros2 --parallel-workers 8
+```
+
+### With calibration tools
+
+Includes `basalt_calibrate` and `basalt_calibrate_imu` (requires Pangolin — significantly longer compile):
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+colcon build --packages-select basalt_ros2 --parallel-workers 8 \
+  --cmake-args -DBASALT_BUILD_CALIBRATION_TOOLS=ON
+```
+
+### depthai-ros driver
+
+Required for OAK-FFC-3P camera. Build separately if camera driver changes are needed:
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" \
+colcon build --packages-select depthai_ros_driver --parallel-workers 8
+```
+
+### Clean rebuild
+
+If you see cmake install errors (e.g. missing `.a` files from stale build cache):
+
+```bash
+rm -rf /media/logic/USamsung/ros2_ws/build/basalt_ros2 \
+       /media/logic/USamsung/ros2_ws/install/basalt_ros2
+cd /media/logic/USamsung/ros2_ws
+colcon build --packages-select basalt_ros2 --parallel-workers 8
+```
+
+---
+
+## Camera Calibration
+
+Calibration must be done before running the VIO node. The calibration tools are built as part of the normal colcon build and are located in the build directory.
+
+### Prerequisites
+
+Set `$DEV_HOME` in your `~/.bashrc` to your workspace root (the parent of `basalt_calibration/`):
+
+```bash
+export DEV_HOME="/media/logic/USamsung"  # adjust per system
+```
+
+### Build Output Location
+
+After building with colcon, the calibration executables are at:
+
+```text
+<ros2_ws>/build/basalt_ros2/basalt_calibrate
+<ros2_ws>/build/basalt_ros2/basalt_calibrate_imu
+```
+
+Run them from that directory:
+
+```bash
+cd /media/logic/USamsung/ros2_ws/build/basalt_ros2
+source /opt/ros/jazzy/setup.bash
+```
+
+### AprilGrid Configuration
+
+Create the AprilGrid configuration file (measure your own grid):
+
+```bash
+cat > $DEV_HOME/basalt_calibration/aprilgrid.json << 'EOF'
+{
+    "tagCols": 6,
+    "tagRows": 6,
+    "tagSize": 0.0882,
+    "tagSpacing": 0.303
+}
+EOF
+```
+
+`tagSpacing` is a **ratio** (gap / tagSize), not an absolute measurement. A 1% error in measurements causes ~1–2 px reprojection error.
+
+### Calibration Overview
+
+```text
+Recording 1: Stereo + IMU (30 fps, stereo-only driver)
+  ├── Step 1: Stereo camera calibration  → stereo_imu_calibration_results/calibration.json
+  └── Step 2: IMU calibration            → stereo_imu_calibration_results/calibration.json (updated)
+
+Recording 2: RGB + Stereo + IMU (~4.5 fps, 3-camera sync driver)  [optional]
+  └── Step 3: 3-camera calibration       → stereo_rgb_imu_calibration_results/calibration.json
+
+Step 4: Merge stereo+IMU with RGB extrinsics → merged_calibration_results/calibration.json  [optional]
+
+Final: Copy result to config/calibration.json
+```
+
+**IMPORTANT:** The `--result-path` for Steps 1 and 2 **must be identical**. The number of cameras in `calibration.json` must match the recording — using a 3-camera file with a 2-camera recording causes silent failures.
+
+### Step 1: Stereo Camera Calibration
+
+Mount the **AprilGrid on a wall** and **move the camera rig** dynamically in front of it. Use Recording 1 (stereo + IMU, 30 fps).
+
+```bash
+./basalt_calibrate \
+  --dataset-path  $DEV_HOME/basalt_calibration/stereo_imu_calibration_record/stereo_imu_calibration_record_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid  $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_results \
+  --cam-types pinhole-radtan8 pinhole-radtan8
+```
+
+**In the GUI:**
+
+1. Wait for corner detection to complete
+2. Click **"init_cam_intr"** → **"init_cam_poses"** → **"init_cam_extr"** → **"init_opt"**
+3. Check **"opt_until_converge"** — wait for convergence
+4. Click **"save_calib"**
+
+Good calibration: mean reprojection error < 1.0 px (ideal < 0.5 px).
+
+### Step 2: IMU Calibration
+
+Use the **same Recording 1** and the **same `--result-path`** as Step 1. The stereo `calibration.json` is loaded automatically.
+
+**IMU noise parameters** (Kalibr continuous-time model):
+
+| IMU | `--gyro-noise-std` | `--accel-noise-std` | `--gyro-bias-std` | `--accel-bias-std` |
+| --- | --- | --- | --- | --- |
+| BMI270 (OAK-FFC-3P) | 0.0005 | 0.02 | 0.0001 | 0.001 |
+| BMI160 (TUM-VI/EuRoC) | 0.000282 | 0.016 | 0.0001 | 0.001 |
+
+Warning: Do not set `gyro-noise-std` above 0.002 — it de-weights gyroscope measurements and prevents the optimizer from constraining rotation.
+
+```bash
+./basalt_calibrate_imu \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_record/stereo_imu_calibration_record_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_imu_calibration_results \
+  --gyro-noise-std 0.0005 \
+  --accel-noise-std 0.02 \
+  --gyro-bias-std 0.0001 \
+  --accel-bias-std 0.001
+```
+
+**In the GUI (buttons left to right):**
+
+1. **"load_dataset"** → **"detect_corners"** → **"init_cam_poses"** → **"init_cam_imu"** → **"init_opt"**
+2. Check **"opt_until_converge"** — wait for convergence
+3. Optionally enable `opt_cam_time_offset` and `opt_imu_scale` for refinement
+4. Click **"save_calib"** — updates `calibration.json` with IMU extrinsics
+
+**Evaluate:**
+- g vector norm should be close to 9.81 m/s²
+- Mean reprojection error < 2 px (ideal < 1 px)
+- Spline plots (solid) should follow raw IMU data (dashed)
+
+### Step 3: 3-Camera Calibration (Optional — RGB Extrinsics)
+
+Only needed if using the RGB camera. Use Recording 2 (~4.5 fps, all 3 cameras). Mount camera on tripod, **move the AprilGrid board** in front of the cameras.
+
+```bash
+./basalt_calibrate \
+  --dataset-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_record/stereo_rgb_imu_calibration_record_0.mcap \
+  --dataset-type mcap \
+  --aprilgrid $DEV_HOME/basalt_calibration/aprilgrid.json \
+  --result-path $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results \
+  --cam-types pinhole-radtan8 ds pinhole-radtan8
+```
+
+Use `ds` (double sphere) for the IMX577 RGB (113° HFOV). Same GUI workflow as Step 1.
+
+### Step 4: Merge Calibrations (Optional — RGB Only)
+
+Combines stereo+IMU (Step 2) with RGB extrinsics (Step 3):
+
+```bash
+python3 /media/logic/USamsung/ros2_ws/src/basalt_ros2/scripts/merge_calibrations.py \
+  --stereo-imu $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
+  --three-cam $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results/calibration.json \
+  --output $DEV_HOME/basalt_calibration/merged_calibration_results/calibration.json
+```
+
+For VIO (stereo + IMU only), skip Steps 3–4 and use the 2-camera result directly.
+
+### Copy Result to Config
+
+```bash
+cp $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
+   /media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json
+```
+
+---
+
 ## Testing instructions
 
 ```bash
@@ -233,7 +441,7 @@ After changing any value, rebuild:
 
 ```bash
 cd /media/logic/USamsung/ros2_ws
-colcon build --packages-select basalt_ros2 --parallel-workers 8
+MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2-ros --parallel-workers 8
 ```
 
 ### `optical_flow_->input_queue` capacity

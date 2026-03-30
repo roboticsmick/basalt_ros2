@@ -104,10 +104,12 @@ foreach(target IN LISTS EIGEN_LAPACK_TARGETS)
     target_link_libraries(${target} ${EIGEN_STANDARD_LIBRARIES_TO_LINK_TO})
   endif()
   add_dependencies(lapack ${target})
-  install(TARGETS ${target}
-          RUNTIME DESTINATION bin
-          LIBRARY DESTINATION lib
-          ARCHIVE DESTINATION lib)
+  if(EIGEN_LEAVE_TEST_IN_ALL_TARGET)
+    install(TARGETS ${target}
+            RUNTIME DESTINATION bin
+            LIBRARY DESTINATION lib
+            ARCHIVE DESTINATION lib)
+  endif()
 endforeach()
 
 
