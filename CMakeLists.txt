@@ -396,6 +396,18 @@ if(SCRIPTS_TO_INSTALL)
 endif()
 
 ##################################################
+############# EIGEN INSTALL GUARD ################
+# Eigen's CMakeLists.txt has two separate install() calls:
+#   - install(TARGETS eigen EXPORT Eigen3Targets)  → suppressed by EXCLUDE_FROM_ALL
+#   - install(FILES ... Eigen3Config.cmake ...)     → NOT suppressed by EXCLUDE_FROM_ALL
+# This leaves a broken Eigen3Config.cmake (referencing a missing Eigen3Targets.cmake)
+# in the colcon install prefix, causing every other workspace package that calls
+# find_package(Eigen3) to fail.  Remove those artifacts as a post-install step.
+install(CODE "
+  file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}/share/eigen3\")
+")
+
+##################################################
 ################# ROS2 EXPORT ####################
 
 ament_package()
