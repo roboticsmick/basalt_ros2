@@ -40,19 +40,35 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
 
 ## Build
 
+> **Always run `colcon build` from the workspace root (`ros2_ws/`), never from `src/`.** Running from `src/` puts `build/`, `install/`, and `log/` inside the source tree.
+
 Source ROS2 before any build:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 ```
 
-### VIO node (standard build)
+### Full workspace build
 
-Builds the visual odometry node and all ROS2 components. Calibration tools and Pangolin GUI are excluded by default for faster builds.
+Builds all packages in the workspace. The workspace root contains a `colcon.meta` file that automatically sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages — no manual prefix is needed.
+
+> **Parallelism warning:** `--parallel-workers N` and `MAKEFLAGS="-jN"` are **multiplicative**.
+> `--parallel-workers 8` with `MAKEFLAGS="-j8"` = up to 64 simultaneous compiler processes, which
+> will OOM-crash a machine. Keep the product ≤ 16 for this workspace (Eigen/basalt template
+> instantiation peaks at ~1.5 GB per compiler process).
 
 ```bash
 cd /media/logic/USamsung/ros2_ws
-colcon build --packages-select basalt_ros2 --parallel-workers 8
+MAKEFLAGS="-j4" colcon build --parallel-workers 4
+```
+
+### VIO node only (faster iteration)
+
+Builds only basalt_ros2. Calibration tools and Pangolin GUI are excluded by default.
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
 
 ### With calibration tools
@@ -61,18 +77,17 @@ Includes `basalt_calibrate` and `basalt_calibrate_imu` (requires Pangolin — si
 
 ```bash
 cd /media/logic/USamsung/ros2_ws
-colcon build --packages-select basalt_ros2 --parallel-workers 8 \
+MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1 \
   --cmake-args -DBASALT_BUILD_CALIBRATION_TOOLS=ON
 ```
 
-### depthai-ros driver
+### depthai-ros driver only
 
-Required for OAK-FFC-3P camera. Build separately if camera driver changes are needed:
+Required for OAK-FFC-3P camera. Build separately if camera driver changes are needed. `CMAKE_PREFIX_PATH` is handled automatically by `colcon.meta`.
 
 ```bash
 cd /media/logic/USamsung/ros2_ws
-CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" \
-colcon build --packages-select depthai_ros_driver --parallel-workers 8
+MAKEFLAGS="-j8" colcon build --packages-select depthai_ros_driver --parallel-workers 1
 ```
 
 ### Clean rebuild
@@ -83,8 +98,12 @@ If you see cmake install errors (e.g. missing `.a` files from stale build cache)
 rm -rf /media/logic/USamsung/ros2_ws/build/basalt_ros2 \
        /media/logic/USamsung/ros2_ws/install/basalt_ros2
 cd /media/logic/USamsung/ros2_ws
-colcon build --packages-select basalt_ros2 --parallel-workers 8
+MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
+
+### colcon.meta — workspace build configuration
+
+The file `ros2_ws/colcon.meta` encodes per-package cmake arguments so they are applied automatically on every `colcon build`, without needing to set environment variables manually. It currently sets `CMAKE_PREFIX_PATH=/usr/local` for the four depthai packages so they can find the depthai-core library installed there. Do not delete this file.
 
 ---
 
@@ -441,7 +460,7 @@ After changing any value, rebuild:
 
 ```bash
 cd /media/logic/USamsung/ros2_ws
-MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2-ros --parallel-workers 8
+MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
 
 ### `optical_flow_->input_queue` capacity
