@@ -1,49 +1,161 @@
 # basalt_ros2 VIO Configuration
-# Format: plain YAML (no "config." prefix, no "value0" wrapper)
+# Optimised for OAK-FFC-3P stereo+IMU hardware setup
 # Use with: ros2 run basalt_ros2 visual_odometry_node --ros-args -p config_path:=.../vio_config.yaml
 
 # == Optical Flow Parameters ==
-optical_flow_type: frame_to_frame           # Frame-to-frame LK tracker (single scale)
-optical_flow_detection_grid_size: 40        # Cell size in pixels for keypoint detection (smaller = denser)
-optical_flow_max_recovered_dist2: 0.04      # Max squared distance for recovered features
-optical_flow_pattern: 51                    # 51-point pattern for feature descriptor
-optical_flow_max_iterations: 5              # Lucas-Kanade iterations per level
-optical_flow_levels: 3                      # Pyramid levels for multi-scale tracking
-optical_flow_epipolar_error: 0.005          # Max epipolar error for stereo matching
-optical_flow_skip_frames: 1                 # Process every Nth frame (1 = all frames)
+# Optical flow tracks features across frames and provides stereo-matched landmarks to the VIO estimator.
+# These parameters control the density and quality of tracked feature points.
+
+# Tracking algorithm variant. Adds sub-pixel refinement (sub-pixel accuracy for higher-texture scenes).
+# Range: "frame_to_frame" | "patch" | "multiscale_frame_to_frame". Default: "multiscale_frame_to_frame".
+# Effect: multiscale adds CPU (~10%) but improves tracking on fast motion and small details.
+optical_flow_type: multiscale_frame_to_frame
+
+# Grid cell size (pixels) for FAST corner detection. Image divided into cells; empty cells get new keypoints.
+# For 640x400: grid=10 → 64×40=2560 cells (~2560 features); grid=40 → 160 cells (~160 features).
+# Range: 5–80 pixels (typical). Default: 10 pixels. Effect: smaller = denser features, more CPU, better detail.
+optical_flow_detection_grid_size: 10
+
+# Forward-backward tracking consistency: tracked point to frame N, then back to frame N-1.
+# Round-trip squared pixel distance must be < this threshold. Rejects tracking outliers.
+# Range: 0.01–0.25 px². Default: 0.04. Effect: lower = stricter (fewer false tracks), higher = more lenient.
+optical_flow_max_recovered_dist2: 0.04
+
+# Pixel sampling pattern for Lucas-Kanade gradient patches: 24/50/51/52 only (else abort).
+# 50=Pattern50 and 51=Pattern51 are similar 50/51-point patterns; negligible difference.
+# Range: ONLY 24, 50, 51, 52 (invalid → std::abort). Default: 50. Effect: minimal; use 50 for consistency.
+optical_flow_pattern: 50
+
+# Lucas-Kanade solver iterations per pyramid level per tracked point. Higher = more accurate tracking.
+# Range: 1–10 (typical). Default: 6. Effect: >6 gives diminishing returns; 6 good compromise.
+optical_flow_max_iterations: 6
+
+# Pyramid depth: levels N,N-1,...,0 built from each image (N+1 effective scales).
+# pyramid_levels=4 → scales 4,3,2,1,0 (5 total). Default: 4 (5 scales).
+# Range: 2–5 (typical). Effect: more levels = handles faster motion; costs more CPU.
+optical_flow_levels: 4
+
+# Epipolar constraint filter for stereo matching (in normalized camera coordinates after model unprojection).
+# Points violating |p_left^T * E * p_right| < threshold are rejected from stereo pairing.
+# Range: 0.003–0.05. Default: 0.01. Effect: 0.01 is 2× more lenient than 0.005; good for noisy calibration.
+optical_flow_epipolar_error: 0.01
+
+# Forward only every Nth frame to VIO estimator (all frames still tracked internally for continuity).
+# skip_frames=2 → every other frame → VIO gets ~15 Hz input (if camera is 30 Hz); halves optical flow CPU.
+# Range: 1–4 (typical). Default: 2. Effect: higher = lower latency/CPU, but sparser pose updates.
+optical_flow_skip_frames: 2
 
 # == VIO Solver Type ==
-vio_linearization_type: ABS_QR              # Absolute QR or ABS_SC or REL_SC
-vio_sqrt_marg: true                         # Use square-root marginalization
+# Controls linearization/factorization algorithm for bundle adjustment.
+
+# Linearization strategy: ABS_QR (absolute coords, QR decomp) is most numerically stable.
+# Range: "ABS_QR" | "ABS_SC" | "REL_SC" (invalid → std::abort). Default: "ABS_QR".
+# Effect: ABS_QR uses most memory/CPU but most stable; ABS_SC/REL_SC faster but noisier on long windows.
+vio_linearization_type: ABS_QR
+
+# Store marginalization prior in square-root (Cholesky R-factor) form for numerically better conditioning.
+# Range: true | false. Default: true. Effect: true is strongly recommended; false only for debugging.
+vio_sqrt_marg: true
 
 # == VIO State Management ==
-vio_max_states: 3                           # Max sliding window states
-vio_max_kfs: 7                              # Max keyframes retained
-vio_min_frames_after_kf: 5                  # Frames before next keyframe allowed
-vio_new_kf_keypoints_thresh: 0.7            # Keyframe threshold (fraction of max tracked)
+# Controls the size of the sliding window and keyframe map.
+
+# Maximum number of frame states with full pose+velocity+bias in the window.
+# Marginalization triggers when states ≥ max_states. With skip_frames=2 at 30 Hz, 3 states ≈ 200ms history.
+# Range: 2–6. Default: 3. Effect: >4 costs more CPU; <3 risks unobservable velocity/bias.
+vio_max_states: 3
+
+# Maximum number of older keyframe poses (demoted from full states) kept in the window.
+# When full_poses > max_kfs, oldest keyframe with fewest tracked landmarks is removed.
+# Range: 5–15. Default: 7. Effect: larger = bigger map, better long-range constraints, more compute.
+vio_max_kfs: 7
+
+# Minimum frames since last keyframe before a new one can be created (temporal constraint).
+# New KF created only if connected_ratio < vio_new_kf_keypoints_thresh AND frames_after_kf > this.
+# Range: 1–10. Default: 1. Effect: 1 = very aggressive (new KF every ~2 frames), more map updates, more CPU.
+vio_min_frames_after_kf: 1
+
+# Keyframe trigger: when ratio of map-connected landmarks drops below this, declare new keyframe.
+# connected_ratio = (tracked_in_existing_map) / (total_tracked_now).
+# Range: 0.1–0.9. Default: 0.7. Effect: lower = more frequent KFs; at 0.7, new KF when >30% of points are new.
+vio_new_kf_keypoints_thresh: 0.7
 
 # == VIO Tuning ==
-vio_debug: false                            # Enable debug output (expensive)
-vio_extended_logging: false                 # Extended logging for analysis
-vio_max_iterations: 7                       # Solver iterations per frame
-vio_obs_std_dev: 0.5                        # Observation noise std dev (pixels)
-vio_obs_huber_thresh: 1.0                   # Huber loss threshold
-vio_min_triangulation_dist: 0.05            # Min baseline for landmark triangulation
-vio_enforce_realtime: false                 # Drop frames if VIO falls behind
+# Fine-grained optimization parameters.
+
+# Enable debug output (expensive; prints tracking info to console). Range: true | false. Default: false.
+vio_debug: false
+
+# Extended logging for offline analysis. Range: true | false. Default: false.
+vio_extended_logging: false
+
+# Levenberg-Marquardt outer iterations per frame. Each iteration: linearize all residuals + solve.
+# Range: 5–15. Default: 7. Effect: higher = better convergence per frame but higher latency.
+vio_max_iterations: 7
+
+# Standard deviation of 2D keypoint observations (normalized camera coords after projection model).
+# Used in reprojection weight: obs_weight = huber_weight / (obs_std_dev²). NOT raw pixel noise.
+# Range: 0.1–2.0. Default: 0.5. Effect: lower = trust tracks more tightly (less robust to noise).
+vio_obs_std_dev: 0.5
+
+# Huber loss transition threshold (same units as obs_std_dev). Residuals below = squared loss, above = linear.
+# Rejects outlier tracks by downweighting large residuals instead of discarding them.
+# Range: obs_std_dev to 5.0. Default: 1.0. Effect: higher = accept more outliers; lower = reject more.
+vio_obs_huber_thresh: 1.0
+
+# Minimum camera translation baseline (meters) needed to triangulate a new 3D landmark.
+# Keyframe cannot triangulate features unless baseline ≥ this distance (ensures stereo baseline is sufficient).
+# Range: 0.01–0.5 m. Default: 0.03 m. Effect: 0.03 m (3 cm) allows triangulation with small motion; good for slow AUV.
+vio_min_triangulation_dist: 0.03
+
+# Realtime enforcement: when true, drops incoming vision frames if VIO processing falls behind.
+# Prevents queue buildup under heavy load at the cost of skipped frames (discontinuities in trajectory).
+# Range: true | false. Default: true. Effect: true needed only if VIO can't sustain camera input rate.
+vio_enforce_realtime: true
 
 # == Levenberg-Marquardt Damping ==
-vio_lm_lambda_initial: 1.0e-4               # Initial LM damping parameter
-vio_lm_lambda_min: 1.0e-6                   # Min damping (most trust in model)
-vio_lm_lambda_max: 1.0e2                    # Max damping (most trust in gradient)
+# Controls the Levenberg-Marquardt solver's trust region via damping parameter λ.
+# Low λ → Gauss-Newton (fast near optimum). High λ → gradient descent (stable far from optimum).
+# λ starts at lambda_initial each frame, multiplies by 1/3 for accepted steps, by lambda_vee for rejects.
+
+# Initial LM damping at start of each frame's optimization.
+# Range: 1e-6 to 1e-1. Default: 1e-4. Effect: lower = trust model more (faster); higher = safer.
+vio_lm_lambda_initial: 1.0e-4
+
+# Lower bound on diagonal damping to prevent underdamping (Hdiag_lambda = H.diagonal()*λ clamped ≥ this).
+# Range: 1e-8 to 1e-4. Default: 1e-6. Effect: must be < lambda_initial; too high = slow convergence.
+vio_lm_lambda_min: 1.0e-6
+
+# Soft upper bound on λ (multiplication by lambda_vee on bad steps will eventually abandon if λ exceeds this).
+# Range: 1 to 1e4. Default: 1e2. Effect: higher = more iterations on difficult frames; practical limit.
+vio_lm_lambda_max: 1.0e2
 
 # == Initialization Priors ==
-vio_init_pose_weight: 1.0e8                 # Prior weight for initial pose
-vio_init_ba_weight: 1.0e1                   # Prior weight for accelerometer bias
-vio_init_bg_weight: 1.0e2                   # Prior weight for gyroscope bias
+# Soft constraints on the first frame's state to anchor the problem and prevent initialization drift.
+
+# Prior weight on initial position (X,Y,Z) and yaw. Very large = almost fixed initialization.
+# Range: 1e6 to 1e10. Default: 1e8. Effect: 1e8 = ~1 cm/degree uncertainty at start; essential for drift-free init.
+vio_init_pose_weight: 1.0e8
+
+# Prior weight on accelerometer bias at initialization. Low = allows rapid bias adaptation.
+# Range: 1 to 100. Default: 10. Effect: 1e1 = weak prior; IMU bias learns quickly in first few frames.
+vio_init_ba_weight: 1.0e1
+
+# Prior weight on gyroscope bias at initialization. Higher than accel because gyro bias more stable.
+# Range: 10 to 1000. Default: 100. Effect: 1e2 = moderate prior; gyro bias drifts slowly, constrained moderately.
+vio_init_bg_weight: 1.0e2
 
 # == Marginalization ==
-vio_marg_lost_landmarks: true               # Marginalize landmarks with lost tracks
-vio_kf_marg_feature_ratio: 0.1              # Ratio of features to marginalize at KF
+# Controls which states/landmarks are kept in the sliding window vs. marginalized (condensed into prior).
+
+# Marginalize landmarks that are no longer observed in current frame (lost tracks).
+# Range: true | false. Default: true. Effect: true = cleaner map; false = keeps lost landmarks longer (aids revisit).
+vio_marg_lost_landmarks: true
+
+# Keyframe removal criterion: KF is candidate for removal if fraction of still-tracked landmarks < this ratio.
+# Protects keyframes with good ongoing coverage from removal. Example: 0.1 = remove if <10% of KF's landmarks tracked.
+# Range: 0.01–0.5. Default: 0.1. Effect: higher = more aggressive removal (smaller map); lower = conservative (larger map).
+vio_kf_marg_feature_ratio: 0.1
 
 # == VIO Health Tracking ==
 # Controls when the VIO is considered healthy enough to publish odometry,

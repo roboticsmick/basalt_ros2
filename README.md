@@ -58,21 +58,22 @@ source /opt/ros/jazzy/setup.bash
 Builds all packages in the workspace. The workspace root contains a `colcon.meta` file that automatically sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages — no manual prefix is needed.
 
 > **Parallelism warning:** `--parallel-workers N` and `MAKEFLAGS="-jN"` are **multiplicative**.
-> `--parallel-workers 8` with `MAKEFLAGS="-j8"` = up to 64 simultaneous compiler processes, which
-> will OOM-crash a machine. Keep the product ≤ 16 for this workspace (Eigen/basalt template
-> instantiation peaks at ~1.5 GB per compiler process).
+> `--parallel-workers 4` with `MAKEFLAGS="-j4"` = up to 16 simultaneous compiler processes.
+> Keep the product ≤ 16 — Eigen/basalt template instantiation peaks at ~1.5 GB per process.
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 MAKEFLAGS="-j4" colcon build --parallel-workers 4
 ```
+
+> **Jetson:** Use `MAKEFLAGS="-j2" colcon build --parallel-workers 2` to stay within RAM limits.
 
 ### VIO node only (faster iteration)
 
 Builds only basalt_ros2. Calibration tools and Pangolin GUI are excluded by default.
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
 
@@ -81,7 +82,7 @@ MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 Includes `basalt_calibrate` and `basalt_calibrate_imu` (requires Pangolin — significantly longer compile):
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1 \
   --cmake-args -DBASALT_BUILD_CALIBRATION_TOOLS=ON
 ```
@@ -91,7 +92,7 @@ MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1 
 Required for OAK-FFC-3P camera. Build separately if camera driver changes are needed. `CMAKE_PREFIX_PATH` is handled automatically by `colcon.meta`.
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 MAKEFLAGS="-j8" colcon build --packages-select depthai_ros_driver --parallel-workers 1
 ```
 
@@ -100,9 +101,8 @@ MAKEFLAGS="-j8" colcon build --packages-select depthai_ros_driver --parallel-wor
 If you see cmake install errors (e.g. missing `.a` files from stale build cache):
 
 ```bash
-rm -rf /media/logic/USamsung/ros2_ws/build/basalt_ros2 \
-       /media/logic/USamsung/ros2_ws/install/basalt_ros2
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
+rm -rf build/basalt_ros2 install/basalt_ros2
 MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
 
@@ -118,25 +118,27 @@ Calibration must be done before running the VIO node. The calibration tools are 
 
 ### Prerequisites
 
-Set `$DEV_HOME` in your `~/.bashrc` to your workspace root (the parent of `basalt_calibration/`):
+Set `$DEV_HOME` in your `~/.bashrc` to the parent directory of `ros2_ws/` (same as for the depthai-ros build):
 
 ```bash
-export DEV_HOME="/media/logic/USamsung"  # adjust per system
+export DEV_HOME="/path/to/your/dev/root"  # e.g. ~ or /media/user/nvme
 ```
+
+`basalt_calibration/` (where recordings and results are stored) lives at `$DEV_HOME/basalt_calibration/`.
 
 ### Build Output Location
 
 After building with colcon, the calibration executables are at:
 
 ```text
-<ros2_ws>/build/basalt_ros2/basalt_calibrate
-<ros2_ws>/build/basalt_ros2/basalt_calibrate_imu
+$DEV_HOME/ros2_ws/build/basalt_ros2/basalt_calibrate
+$DEV_HOME/ros2_ws/build/basalt_ros2/basalt_calibrate_imu
 ```
 
 Run them from that directory:
 
 ```bash
-cd /media/logic/USamsung/ros2_ws/build/basalt_ros2
+cd $DEV_HOME/ros2_ws/build/basalt_ros2
 source /opt/ros/jazzy/setup.bash
 ```
 
@@ -253,7 +255,7 @@ Use `ds` (double sphere) for the IMX577 RGB (113° HFOV). Same GUI workflow as S
 Combines stereo+IMU (Step 2) with RGB extrinsics (Step 3):
 
 ```bash
-python3 /media/logic/USamsung/ros2_ws/src/basalt_ros2/scripts/merge_calibrations.py \
+python3 $DEV_HOME/ros2_ws/src/basalt_ros2/scripts/merge_calibrations.py \
   --stereo-imu $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
   --three-cam $DEV_HOME/basalt_calibration/stereo_rgb_imu_calibration_results/calibration.json \
   --output $DEV_HOME/basalt_calibration/merged_calibration_results/calibration.json
@@ -265,7 +267,7 @@ For VIO (stereo + IMU only), skip Steps 3–4 and use the 2-camera result direct
 
 ```bash
 cp $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
-   /media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json
+   $DEV_HOME/ros2_ws/src/basalt_ros2/config/calibration.json
 ```
 
 ---
@@ -274,19 +276,21 @@ cp $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json 
 
 ```bash
 # 1. Terminal 1 — Camera driver
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 launch depthai_ros_driver driver.launch.py \
-  params_file:=/media/logic/USamsung/ros2_ws/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_vio.yaml \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_vio.yaml \
   camera_model:=OAK-FFC-3P
 ```
 
 ```bash
 # 2. Terminal 2 — VIO node
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
-  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/vio_config.json \
+  -p calib_path:=$(pwd)/src/basalt_ros2/config/calibration.json \
+  -p config_path:=$(pwd)/src/basalt_ros2/config/vio_config.json \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
   -p right_image_topic:=/oak/right/image_raw \
@@ -296,6 +300,7 @@ ros2 run basalt_ros2 visual_odometry_node \
 
 ```bash
 # 3. Terminal 3 — Verify topics and health status
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 topic list | grep -E "(odometry|basalt_vio)"
 
@@ -346,11 +351,12 @@ These control the ROS2 node itself and are independent of the Basalt algorithm.
 Pass `config_path` and node parameters at launch:
 
 ```bash
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
-  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/vio_config.json \
+  -p calib_path:=$(pwd)/src/basalt_ros2/config/calibration.json \
+  -p config_path:=$(pwd)/src/basalt_ros2/config/vio_config.json \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
   -p right_image_topic:=/oak/right/image_raw
@@ -366,29 +372,29 @@ If `config_path` is omitted, built-in defaults are used silently.
 
 These control the Lucas-Kanade patch tracker that finds and tracks image features between frames.
 
-| Parameter | Type | VIO default | VO default | Effect |
-|---|---|---|---|---|
-| `optical_flow_type` | string | `frame_to_frame` | `frame_to_frame` | Tracker variant: `frame_to_frame` tracks patches against the previous frame |
-| `optical_flow_detection_grid_size` | int | 50 | 40 | Size (px) of each detection cell. Smaller = denser features. At 640×400: grid 50 → ~96 cells, grid 40 → ~160 cells |
-| `optical_flow_max_recovered_dist2` | float | 0.04 | 0.04 | Forward-backward consistency check threshold. Smaller = stricter. 0.04 rejects if error > 0.2 px |
-| `optical_flow_pattern` | int | 51 | 51 | Sampling pattern for tracked patch. 51 = 52-point diamond at 0.5× scale (±3.5 px radius) |
-| `optical_flow_max_iterations` | int | 5 | 5 | Max Lucas-Kanade iterations per pyramid level. More = more precise, more CPU |
-| `optical_flow_levels` | int | 3 | 3 | Image pyramid depth. More levels handle faster motion. Increase to 4 if tracking drops on fast rotation |
-| `optical_flow_epipolar_error` | float | 0.005 | 0.005 | Epipolar constraint threshold for stereo matching. Raise to 0.01 if calibration is imperfect |
-| `optical_flow_skip_frames` | int | 1 | 1 | Send every N-th result to VIO. 1 = all frames, 2 = every other. Use 2 to halve CPU load |
+| Parameter | Type | Default | Effect |
+|---|---|---|---|
+| `optical_flow_type` | string | `multiscale_frame_to_frame` | Tracker variant. `multiscale_frame_to_frame` adds sub-pixel refinement across pyramid levels; improves tracking on fast motion and small details (~10% more CPU than `frame_to_frame`) |
+| `optical_flow_detection_grid_size` | int | `10` | Size (px) of each detection cell. Smaller = denser features. At 640×400: grid 10 → ~2560 features, grid 40 → ~160 features |
+| `optical_flow_max_recovered_dist2` | float | `0.04` | Forward-backward consistency check threshold. Smaller = stricter. 0.04 rejects if round-trip error > 0.2 px |
+| `optical_flow_pattern` | int | `50` | Sampling pattern for tracked patch (valid: 24, 50, 51, 52 — invalid value aborts). 50/51 are equivalent 50/51-point patterns |
+| `optical_flow_max_iterations` | int | `6` | Max Lucas-Kanade iterations per pyramid level. More = more precise, more CPU. >6 gives diminishing returns |
+| `optical_flow_levels` | int | `4` | Image pyramid depth (4 → 5 scales). More levels handle faster motion; costs more CPU |
+| `optical_flow_epipolar_error` | float | `0.01` | Epipolar constraint threshold for stereo matching (normalized coords). 0.01 is lenient enough for typical calibration noise |
+| `optical_flow_skip_frames` | int | `2` | Send every N-th result to VIO. 2 = every other frame → VIO gets ~15 Hz from 30 Hz camera; halves optical flow CPU |
 
 ### Sliding Window and Keyframe Parameters
 
 These control when new keyframes are created and how many states are kept in the optimizer.
 
-| Parameter | Type | VIO default | VO default | Effect |
-|---|---|---|---|---|
-| `vio_max_states` | int | 3 | 3 | Max IMU states in active window. Larger = more pre-integration history, more compute |
-| `vio_max_kfs` | int | 7 | 7 | Max keyframes retained. Reduce to 5 on embedded, raise to 10 for more map coverage |
-| `vio_min_frames_after_kf` | int | 5 | 1 | Minimum frames between new keyframes. VIO conservative (5), VO aggressive (1) |
-| `vio_new_kf_keypoints_thresh` | float | 0.7 | 0.8 | Fraction of features already in 3D map. Lower = fewer KFs. Raise to 0.8 for fast motion |
-| `vio_kf_marg_feature_ratio` | float | 0.1 | 0.2 | KF is removable when <this fraction of its features tracked. Lower = keep KFs longer |
-| `vio_marg_lost_landmarks` | bool | true | true | Remove invisible landmarks before marginalization. Keeps map lean |
+| Parameter | Type | Default | Effect |
+|---|---|---|---|
+| `vio_max_states` | int | `3` | Max IMU states in active window. Larger = more pre-integration history, more compute |
+| `vio_max_kfs` | int | `7` | Max keyframes retained. Reduce to 5 on embedded, raise to 10 for more map coverage |
+| `vio_min_frames_after_kf` | int | `1` | Minimum frames between new keyframes. `1` = aggressive (new KF every ~2 frames), more map updates |
+| `vio_new_kf_keypoints_thresh` | float | `0.7` | Keyframe triggered when ratio of map-connected landmarks drops below this. `0.7` = new KF when >30% of tracked points are new |
+| `vio_kf_marg_feature_ratio` | float | `0.1` | KF is removable when <this fraction of its features are still tracked. Lower = keep KFs longer |
+| `vio_marg_lost_landmarks` | bool | `true` | Remove invisible landmarks before marginalization. Keeps map lean |
 
 ### Optimization Parameters
 
@@ -401,8 +407,8 @@ These control the non-linear bundle adjustment solver that refines poses and lan
 | `vio_max_iterations` | int | 7 | Max Levenberg-Marquardt iterations per frame. More = better convergence, higher latency |
 | `vio_obs_std_dev` | float | 0.5 | Observation noise std-dev (pixels). Raise to 1.0 if vision residuals large (poor calibration) |
 | `vio_obs_huber_thresh` | float | 1.0 | Huber loss threshold. Lower (0.5) = more aggressive outlier rejection |
-| `vio_min_triangulation_dist` | float | 0.05 | Minimum baseline (meters) for landmark triangulation. Reduce to 0.02 for close-range platforms |
-| `vio_enforce_realtime` | bool | false | Drop frames if VIO falls behind. Enable on slow hardware where processing is slower than camera rate |
+| `vio_min_triangulation_dist` | float | `0.03` | Minimum baseline (meters) for landmark triangulation. 0.03 m (3 cm) allows triangulation with small motion; good for slow AUV |
+| `vio_enforce_realtime` | bool | `true` | Drop incoming frames if VIO processing falls behind. Prevents queue buildup; set `false` only if VIO comfortably sustains camera rate |
 
 ### Levenberg-Marquardt Damping
 
@@ -434,57 +440,55 @@ These parameters live in `vio_config.yaml` / `vio_config.json` alongside the alg
 
 ### Tuning for Common Scenarios
 
-#### Slow environment / close range (AUV hovering, indoor)
+#### Very slow motion / near-static (AUV hovering, benthic survey)
 
 ```json
 {
-  "config.optical_flow_detection_grid_size": 40,
-  "config.vio_min_triangulation_dist": 0.02,
-  "config.vio_new_kf_keypoints_thresh": 0.8,
-  "config.vio_min_frames_after_kf": 2
+  "config.optical_flow_detection_grid_size": 5,
+  "config.vio_min_triangulation_dist": 0.01,
+  "config.vio_enforce_realtime": false
 }
 ```
 
-Denser features and lower triangulation threshold compensate for small baseline motion.
+Even denser features (grid 5 → ~8000 features at 640×400) and a smaller triangulation baseline compensate for minimal camera translation. Disable realtime enforcement when frame rate is low and VIO can process everything.
 
 #### Fast motion / high rotation (surface vessel, aerial)
 
 ```json
 {
-  "config.optical_flow_levels": 4,
-  "config.optical_flow_max_iterations": 7,
+  "config.optical_flow_detection_grid_size": 20,
+  "config.optical_flow_max_iterations": 8,
   "config.vio_new_kf_keypoints_thresh": 0.8,
-  "config.vio_min_frames_after_kf": 1
+  "config.vio_obs_std_dev": 1.0
 }
 ```
 
-Extra pyramid level handles large pixel displacements. Aggressive keyframing captures rapid geometry changes.
+Sparser features reduce optical flow CPU on fast platforms. More LK iterations and relaxed observation noise improve robustness when per-frame motion is large.
 
 #### CPU-constrained hardware (embedded ARM)
 
 ```json
 {
-  "config.optical_flow_detection_grid_size": 60,
-  "config.optical_flow_skip_frames": 2,
+  "config.optical_flow_type": "frame_to_frame",
+  "config.optical_flow_detection_grid_size": 30,
   "config.vio_max_kfs": 5,
-  "config.vio_max_iterations": 5,
-  "config.vio_enforce_realtime": true
+  "config.vio_max_iterations": 5
 }
 ```
 
-Fewer features, half-rate updates, smaller KF window, fewer optimizer iterations.
+Single-scale tracker (drop multiscale), fewer features, smaller KF window, fewer optimizer iterations. `optical_flow_skip_frames: 2` and `vio_enforce_realtime: true` are already the defaults.
 
 #### Poor stereo calibration / wide-angle lenses
 
 ```json
 {
-  "config.optical_flow_epipolar_error": 0.01,
+  "config.optical_flow_epipolar_error": 0.02,
   "config.vio_obs_std_dev": 1.0,
   "config.vio_obs_huber_thresh": 0.5
 }
 ```
 
-Relaxed epipolar check keeps more stereo matches. Higher observation noise down-weights imprecise measurements; lower Huber threshold rejects large outliers.
+More lenient epipolar check (0.02 vs default 0.01) keeps more stereo matches when calibration is imperfect. Higher observation noise down-weights imprecise measurements; lower Huber threshold rejects large outliers.
 
 ### Verifying the config is loaded
 
@@ -608,7 +612,7 @@ The pipeline uses five internal buffer/queue constants that are hardcoded in C++
 After changing any value, rebuild:
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 MAKEFLAGS="-j8" colcon build --packages-select basalt_ros2 --parallel-workers 1
 ```
 
@@ -692,24 +696,19 @@ The main density control is `optical_flow_detection_grid_size`. It defines the c
 
 | Grid size | Features at 640×400 | Use case |
 |-----------|---------------------|----------|
-| 50 (VIO default) | ~96 max | Low CPU, sparse scene |
-| 40 (VO default) | ~160 max | Good balance |
-| 30 | ~280 max | Feature-rich scenes, more CPU |
-| 25 | ~400 max | Maximum density |
+| 5 | ~8000 max | Maximum density, high CPU |
+| 10 **(default)** | ~2560 max | Dense features, rich map |
+| 20 | ~640 max | Good balance on faster platforms |
+| 30 | ~280 max | Moderate density, lower CPU |
+| 40 | ~160 max | Sparse, low CPU |
 
-To match the density of a typical ROS1 basalt installation, add to your config JSON:
+The default of 10 provides a rich feature map well-suited to slow AUV motion. Raise it (e.g. to 20–30) on CPU-constrained hardware or faster platforms where tracking more features doesn't add value.
 
-```json
-{
-  "config.optical_flow_detection_grid_size": 40
-}
-```
-
-If the right camera still shows heavy dropout after increasing density, relax the epipolar filter:
+If the right camera still shows heavy dropout after adjusting density, relax the epipolar filter beyond the default 0.01:
 
 ```json
 {
-  "config.optical_flow_epipolar_error": 0.01
+  "config.optical_flow_epipolar_error": 0.02
 }
 ```
 

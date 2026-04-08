@@ -158,6 +158,31 @@ vio_marg_lost_landmarks: true
 # Range: 0.01–0.5. Default: 0.1. Effect: higher = more aggressive removal (smaller map); lower = conservative (larger map).
 vio_kf_marg_feature_ratio: 0.1
 
+# == VIO Health Tracking ==
+# Controls when the VIO is considered healthy enough to publish odometry,
+# and when an automatic reset is triggered. Tune for the AUV's motion envelope.
+# These keys are ignored by Basalt's VioConfig loader; parsed separately by the node.
+
+# Minimum number of tracked 3D landmarks — below this, keypoint health fails
+vio_health_min_keypoints: 1
+
+# Maximum expected speed in m/s — above this, velocity health fails.
+# Set to the AUV's max rated speed with a reasonable margin.
+vio_health_max_velocity: 1.5
+
+# Maximum expected speed change per VIO step (m/s) — above this, acceleration health fails.
+# Detects sudden jumps from tracking errors, not real acceleration.
+vio_health_max_acceleration: 0.2
+
+# How long (seconds) all criteria must stay healthy before startup is declared valid.
+# Shorter = faster to start publishing; longer = more confidence before first pose.
+vio_health_startup_duration: 0.3
+
+# How long (seconds) keypoints can stay below minimum before a runtime reset fires.
+# Short timeout recovers quickly; longer tolerates brief occlusions.
+vio_health_keypoint_timeout: 1.0
+
+
 # ============================================================================
 # == INACTIVE PARAMETERS (not loaded by current basalt_ros2 serializer) ==
 # ============================================================================
