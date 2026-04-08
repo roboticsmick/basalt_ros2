@@ -181,7 +181,7 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowBase {
       filterPoints();
     }
 
-    if (frame_counter % config.optical_flow_skip_frames == 0) {
+    if (output_queue && frame_counter % config.optical_flow_skip_frames == 0) {
       try {
         output_queue->push(transforms);
       } catch (const tbb::user_abort&) {

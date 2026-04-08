@@ -28,6 +28,12 @@
         "config.vio_init_ba_weight": 1e1,
         "config.vio_init_bg_weight": 1e2,
         "config.vio_marg_lost_landmarks": true,
-        "config.vio_kf_marg_feature_ratio": 0.1
+        "config.vio_kf_marg_feature_ratio": 0.1,
+
+        "vio_health_min_keypoints": 1,
+        "vio_health_max_velocity": 1.5,
+        "vio_health_max_acceleration": 0.2,
+        "vio_health_startup_duration": 0.3,
+        "vio_health_keypoint_timeout": 1.0
     }
 }

@@ -180,7 +180,7 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_,
       }
 
       // Correct camera time offset
-      // curr_frame->t_ns += calib.cam_time_offset_ns;
+      curr_frame->t_ns += calib.cam_time_offset_ns;
 
       if (!initialized) {
         while (data->t_ns < curr_frame->t_ns) {
