@@ -6,13 +6,14 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
 
 ## TO DO
 
-- Add doxygen comments to libraries
-- All files, classes, and public functions must include Doxygen documentation for clear parameter and function definitions.
-  - Use `@brief` for one-line summaries
-  - Document all parameters with `@param[in/out]`
-  - Include `@return` for non-void functions
-  - Add `@pre` tags matching code assertions (NASA principle compliance)
-  - Example:
+[] Add doxygen comments to libraries
+[] All files, classes, and public functions must include Doxygen documentation for clear parameter and function definitions:
+
+* Use `@brief` for one-line summaries
+* Document all parameters with `@param[in/out]`
+* Include `@return` for non-void functions
+* Add `@pre` tags matching code assertions (NASA principle compliance)
+  Example:
 
     ```cpp
     /**
@@ -29,12 +30,16 @@ A ROS2 Jazzy build designed to work with Luxonis depthai-ros and the OAK-FFC-3P 
     };
     ```
 
-- Add reliability metric / odom freeze detection
-- Methods for handling poor keyframes environment
-- Calibration only works with pinhole-radtan8 model. Implementation and testing needs to be done for other models.
-- Update calibration to export calibration file as yaml instead of json
-- Remove unused scripts and libraries from basalt and basalt-ros libraries that are not used in ros2 implementation
-- 3D point cloud is visualised in foxglove. Remove Basalt GUI testing environment as not used.
+[x] Add reliability metric / odom freeze detection
+[x] Methods for handling poor keyframes environment
+[x] VIO health tracking with automatic reset (keypoints, velocity, acceleration)
+[x] Startup criteria — suppress output until VIO is confirmed healthy
+[x] Camera time offset correction enabled in VIO core
+[x] `publish_transform` flag to decouple TF and odometry publication
+[ ] Calibration only works with pinhole-radtan8 model. Implementation and testing needs to be done for other models.
+[ ] Update calibration to export calibration file as yaml instead of json
+[ ] Remove unused scripts and libraries from basalt and basalt-ros libraries that are not used in ros2 implementation
+[ ] 3D point cloud is visualised in foxglove. Remove Basalt GUI testing environment as not used.
 
 ---
 
@@ -276,12 +281,12 @@ ros2 launch depthai_ros_driver driver.launch.py \
 ```
 
 ```bash
-# 2. Terminal 2 — VIO node with image annotation and config file enabled
+# 2. Terminal 2 — VIO node
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.yaml \
-  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/ros1_vio_config.yaml \
+  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
+  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/vio_config.json \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
   -p right_image_topic:=/oak/right/image_raw \
@@ -290,36 +295,65 @@ ros2 run basalt_ros2 visual_odometry_node \
 ```
 
 ```bash
-# 3. Terminal 3 — Verify topics exist
+# 3. Terminal 3 — Verify topics and health status
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
-ros2 topic list | grep basalt_vio
+ros2 topic list | grep -E "(odometry|basalt_vio)"
+
+# Monitor health status (true = VIO healthy and publishing valid odometry)
+ros2 topic echo /basalt_vio/status
+
+# Monitor keypoint quality ratio (VIO-confirmed / optically-tracked, healthy ~0.5+)
+ros2 topic echo /basalt_vio/keypoint_ratio
 ```
+
+After ~0.3 s of stable tracking you should see `/basalt_vio/status` publish `data: true` and `/odometry` begin publishing valid poses. If the VIO loses tracking it will reset automatically and re-enter the startup sequence.
 
 
 ## Configuration
 
-The VIO node is tuned via a JSON config file passed at launch. Two pre-tuned configs are provided in `config/`:
+Parameters are split across two files by concern:
 
-| File | Use when |
+| File | Purpose |
 |---|---|
-| `config/vio_config.json` | Running with IMU (default mode with OAK-FFC-3P + BMI270) |
-| `config/vo_config.json` | Running without IMU (visual odometry only, `imu_topic` empty) |
+| `config/vio_config.json` / `vio_config.yaml` | Basalt algorithm tuning **and** VIO health thresholds |
+| `config/vo_config.json` | Algorithm tuning for visual-odometry-only mode (no IMU) |
+| ROS2 parameters (`--ros-args -p`) | Deployment settings: topic names, frame IDs, TF flags |
+
+**Edit `vio_config.yaml`** when tuning how the VIO algorithm behaves or how aggressively it resets.  
+**Edit ROS2 parameters** when changing topics, frame names, or infrastructure settings.
+
+### Node Parameters (ROS2 `-p` args)
+
+These control the ROS2 node itself and are independent of the Basalt algorithm.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `calib_path` | `""` | Path to calibration file (`.json` or `.yaml`). Required for IMU mode. If empty, falls back to ROS CameraInfo. |
+| `config_path` | `""` | Path to VIO config file. If empty, Basalt built-in defaults are used. |
+| `left_image_topic` | `/oak/stereo/left/image` | Left camera image topic |
+| `right_image_topic` | `/oak/stereo/right/image` | Right camera image topic |
+| `imu_topic` | `""` | IMU topic. Leave empty to run in visual-odometry-only mode (no IMU fusion). |
+| `odom_frame` | `odom` | TF parent frame for published odometry |
+| `base_frame` | `base_link` | TF child frame for published odometry |
+| `publish_transform` | `true` | Broadcast odom→base_link TF transform. Set `false` if another node owns the TF tree and you only need `/odometry`. |
+| `publish_cloud` | `true` | Publish 3D landmark point cloud on `/keypoints` |
+| `publish_images` | `true` | Publish annotated stereo images on `/basalt_vio/left/image_annotated` etc. |
+| `thread_limit` | `0` | Max TBB threads for VIO solver. `0` = use all available cores. |
+| `odom_watchdog_timeout_ms` | `5000` | Milliseconds without odometry output before a FREEZE warning is logged. Does not trigger a reset — diagnostic only. |
 
 ### Applying a config file
 
-Pass the `config_path` parameter at launch:
+Pass `config_path` and node parameters at launch:
 
 ```bash
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 run basalt_ros2 visual_odometry_node \
   --ros-args \
-  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.yaml \
-  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/ros1_vio_config.yaml \
+  -p calib_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/calibration.json \
+  -p config_path:=/media/logic/USamsung/ros2_ws/src/basalt_ros2/config/vio_config.json \
   -p imu_topic:=/oak/imu/data \
   -p left_image_topic:=/oak/left/image_raw \
-  -p right_image_topic:=/oak/right/image_raw \
-  -p publish_cloud:=true \
-  -p publish_images:=true
+  -p right_image_topic:=/oak/right/image_raw
 ```
 
 If `config_path` is omitted, built-in defaults are used silently.
@@ -386,6 +420,18 @@ These control the non-linear bundle adjustment solver that refines poses and lan
 | `vio_init_ba_weight` | float | 1e1 | Weight on initial accel bias (weak — allows fast calibration) |
 | `vio_init_bg_weight` | float | 1e2 | Weight on initial gyro bias |
 
+### VIO Health Tracking Parameters
+
+These parameters live in `vio_config.yaml` / `vio_config.json` alongside the algorithm params. They are intentionally co-located so anyone tuning the VIO algorithm can also tune the health thresholds in one place. They are read by the ROS2 node after loading the Basalt config — Basalt itself ignores them.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `vio_health_min_keypoints` | `1` | Minimum number of active 3D landmarks. Below this, the keypoint tracker is considered unhealthy. Raise to `10`–`20` to require a richer map before considering the VIO valid. |
+| `vio_health_max_velocity` | `1.5` | Maximum expected speed (m/s). If VIO estimates a speed above this, velocity health fails. **Set to the AUV's rated top speed × 1.5 as a safety margin.** |
+| `vio_health_max_acceleration` | `0.2` | Maximum expected speed *change* between consecutive VIO outputs (m/s). Detects sudden tracking jumps that indicate a corrupted state, not real acceleration. Set higher for platforms with strong thrusters or frequent surge/stop. |
+| `vio_health_startup_duration` | `0.3` | Seconds all three criteria must be continuously healthy before the node declares startup complete and begins publishing valid odometry. Increase to `1.0` for more confidence before first pose. |
+| `vio_health_keypoint_timeout` | `1.0` | Seconds keypoints can remain below `vio_health_min_keypoints` before a **runtime reset** is triggered. A short timeout recovers quickly after brief occlusion; increase to `2.0` to tolerate longer feature loss (e.g. passing over featureless sand). |
+
 ### Tuning for Common Scenarios
 
 #### Slow environment / close range (AUV hovering, indoor)
@@ -449,6 +495,109 @@ Check the VIO node startup log:
 ```
 
 If this line does not appear, `config_path` was not set and defaults are in use. Enable verbose logging by setting `vio_debug: true` in the JSON.
+
+---
+
+## VIO Health Tracking and Automatic Reset
+
+The node monitors three independent health criteria and automatically resets the VIO estimator when any of them fail. Optical flow is **not** reset — it keeps running across resets so the new VIO cycle initialises faster.
+
+### How it works
+
+```
+Startup phase
+  ├── All three trackers must be healthy for vio_health_startup_duration seconds
+  └── /basalt_vio/status: false — /odometry publishes identity pose (no garbage data)
+
+Running phase (after startup_success)
+  ├── /basalt_vio/status: true — /odometry publishes real VIO poses
+  ├── Health checked at 10 Hz
+  └── Any tracker fails → should_reset_ → VIO torn down → reset → back to startup
+
+On reset
+  ├── Optical flow continues (faster re-initialisation)
+  ├── VIO estimator destroyed and recreated
+  ├── All queues drained
+  └── Health trackers cleared
+```
+
+### Three health criteria
+
+| Criterion | Measured from | Triggers reset when |
+|---|---|---|
+| **Keypoints** | Count of active 3D landmarks (`/keypoints`) | Drops below `vio_health_min_keypoints` for longer than `vio_health_keypoint_timeout` seconds |
+| **Velocity** | Magnitude of VIO-estimated velocity | Exceeds `vio_health_max_velocity` (m/s) for any single step |
+| **Acceleration** | Change in velocity between consecutive VIO outputs | Exceeds `vio_health_max_acceleration` (m/s) for any single step |
+
+Velocity and acceleration use zero-tolerance (immediate failure, no timeout) to catch sudden tracking divergence quickly.
+
+### Published topics
+
+| Topic | Type | Content |
+| --- | --- | --- |
+| `/basalt_vio/status` | `std_msgs/Bool` | `true` when startup is complete and VIO is actively publishing valid odometry. `false` during startup and after a reset. Published at 10 Hz. |
+| `/basalt_vio/keypoint_ratio` | `std_msgs/Float32` | Ratio of VIO-confirmed 3D landmarks to optically-tracked 2D features (0–1). A healthy value is above 0.5. Below 0.2 triggers a warning. |
+| `/odometry` | `nav_msgs/Odometry` | Publishes identity pose with zero twist during startup/reset. Publishes real VIO pose during running phase. Never stops publishing. |
+
+### Tuning for the AUV
+
+The defaults are set conservatively for the AUV's low-speed profile (≤ 1.5 m/s forward, low-texture seabed). Adjust for your operating conditions:
+
+**Slow AUV, low-texture seabed:**
+
+```yaml
+# In vio_config.yaml — default settings, should work well
+vio_health_min_keypoints:    1
+vio_health_max_velocity:     1.5
+vio_health_max_acceleration: 0.2
+vio_health_startup_duration: 0.3
+vio_health_keypoint_timeout: 1.0
+```
+
+**AUV with higher speed or regular surge/stop manoeuvres:**
+
+```yaml
+vio_health_max_velocity:     3.0   # Increase to rated speed × 1.5
+vio_health_max_acceleration: 0.5   # Allow faster velocity changes
+```
+
+**Passing over featureless areas (sand, open water):**
+
+```yaml
+vio_health_min_keypoints:    1     # Keep low — any landmarks is better than none
+vio_health_keypoint_timeout: 2.0   # Wait longer before deciding tracking is lost
+```
+
+**Require higher confidence before publishing to navigation:**
+
+```yaml
+vio_health_min_keypoints:    15    # Need a richer map
+vio_health_startup_duration: 1.0   # Healthy for 1 full second before publishing
+```
+
+### Diagnosing resets
+
+The node logs which criterion triggered each reset:
+
+```
+[WARN] Keypoint health failure — triggering VIO reset
+[WARN] Velocity health failure — triggering VIO reset
+[WARN] Acceleration health failure — triggering VIO reset
+```
+
+- **Frequent keypoint resets** — the scene has insufficient texture, or `vio_health_min_keypoints` is too high. Lower `vio_health_min_keypoints` or increase `vio_health_keypoint_timeout`.
+- **Velocity resets** — VIO is producing unrealistic speed estimates. Either the real platform is exceeding `vio_health_max_velocity`, or VIO has diverged. If the AUV is genuinely stationary when this fires, it is a divergence — check calibration.
+- **Acceleration resets** — the VIO state jumped suddenly. Likely a tracking failure rather than real motion. Lower `vio_health_max_acceleration` to be more sensitive, or raise it if the platform has genuine rapid velocity changes.
+
+### Camera time offset correction
+
+The Basalt VIO core corrects camera timestamps by an offset stored in `calibration.json`:
+
+```json
+"cam_time_offset_ns": 198
+```
+
+This corrects for the fixed hardware delay between camera exposure and IMU timestamp. If calibration was performed with `opt_cam_time_offset` enabled in the IMU calibration step, this value is non-zero and meaningful. If your calibration did not estimate the time offset, this will be 0 and has no effect.
 
 ---
 
