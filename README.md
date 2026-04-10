@@ -346,6 +346,20 @@ These control the ROS2 node itself and are independent of the Basalt algorithm.
 | `thread_limit` | `0` | Max TBB threads for VIO solver. `0` = use all available cores. |
 | `odom_watchdog_timeout_ms` | `5000` | Milliseconds without odometry output before a FREEZE warning is logged. Does not trigger a reset — diagnostic only. |
 
+### Published Topics
+
+| Topic | Message type | Always published | Description |
+| --- | --- | --- | --- |
+| `/odometry` | `nav_msgs/Odometry` | Yes | Primary VIO output. Publishes identity pose (zero position, zero twist) during startup and after a reset. Publishes real estimated pose+velocity once `startup_success_` is set. Never stops publishing — consumers can always subscribe without missing the first pose. |
+| `/basalt_vio/status` | `std_msgs/Bool` | Yes | Aggregate VIO health flag at 10 Hz. `true` = VIO has passed all three health checks for the startup duration and is actively publishing valid odometry. `false` = VIO is still in startup or has been reset. Use this to gate navigation behaviour on VIO validity. |
+| `/basalt_vio/keypoint_ratio` | `std_msgs/Float32` | Yes | Ratio of VIO-confirmed 3D landmarks to optically-tracked 2D features, in the range [0, 1]. Values above ~0.5 indicate that most tracked features have been successfully triangulated into the map. Below 0.2 a `WARN_THROTTLE` is logged. Useful for detecting scene texture loss or tracking divergence before a full reset fires. |
+| `/keypoints` | `sensor_msgs/PointCloud2` | Only if `publish_cloud:=true` | Active 3D landmark positions in the VIO world frame (`odom_frame`). Each point is `(x, y, z)` as `float32`. The cloud is updated at the VIO output rate (~10 Hz). Use `rviz2` to visualise the map. |
+| `/basalt_vio/left/image_annotated` | `sensor_msgs/Image` | Only if `publish_images:=true` | Left camera frame with tracked keypoints overlaid. Pink/magenta rings = optically-tracked features. Purple dots = VIO-confirmed 3D landmarks. Published via `image_transport` — compressed transports available. |
+| `/basalt_vio/right/image_annotated` | `sensor_msgs/Image` | Only if `publish_images:=true` | Same annotation as left, but for the right camera. The right image typically shows fewer confirmed landmarks because stereo-matching applies the epipolar filter; some features tracked in left are not accepted in right. |
+| **TF: `odom` → `base_link`** | TF2 transform | Only if `publish_transform:=true` | Broadcasts the current VIO pose as a TF transform between `odom_frame` and `base_frame`. Not broadcast during startup (before `startup_success_`). Disable with `publish_transform:=false` if another node manages the TF tree and you only need `/odometry`. |
+
+> **Health parameter visibility:** The three internal health trackers (keypoints, velocity, acceleration) are not published as individual topics. The aggregate result is `/basalt_vio/status`. Keypoint count is indirectly visible via `/basalt_vio/keypoint_ratio`. Velocity and acceleration checks are internal only — if either fails, the status drops to `false` immediately.
+
 ### Applying a config file
 
 Pass `config_path` and node parameters at launch:
