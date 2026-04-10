@@ -313,6 +313,238 @@ ros2 topic echo /basalt_vio/keypoint_ratio
 
 After ~0.3 s of stable tracking you should see `/basalt_vio/status` publish `data: true` and `/odometry` begin publishing valid poses. If the VIO loses tracking it will reset automatically and re-enter the startup sequence.
 
+---
+
+## Bag / MCAP Playback
+
+Use this workflow to run the VIO node against a pre-recorded MCAP bag instead of a live camera. This is useful for evaluating algorithm performance on someone else's recordings or for repeatable benchmarking.
+
+If your recording is a **ROS 1 `.bag` file**, convert it to a ROS 2 MCAP first — see [Converting a ROS 1 bag to MCAP](#converting-a-ros-1-bag-to-mcap) below.
+
+### Step 1 — Inspect the bag
+
+Find the exact topic names and message types inside the recording:
+
+```bash
+ros2 bag info /path/to/recording.mcap
+```
+
+Identify:
+
+- Left image topic (type `sensor_msgs/msg/Image`)
+- Right image topic (type `sensor_msgs/msg/Image`)
+- IMU topic (type `sensor_msgs/msg/Imu`)
+
+Example output:
+
+```
+Topics with Type:
+ /camera/left/image_raw      sensor_msgs/msg/Image    …
+ /camera/right/image_raw     sensor_msgs/msg/Image    …
+ /imu/data                   sensor_msgs/msg/Imu      …
+```
+
+### Step 2 — Prepare a basalt calibration file
+
+The VIO node needs a basalt-format calibration file (JSON or YAML). If the recording came with calibration data in a different format you need to convert it.
+
+**Basalt JSON skeleton** — fill in the values from the camera's calibration source:
+
+```json
+{
+  "value0": {
+    "T_imu_cam": [
+      {
+        "px": 0.0, "py": 0.0, "pz": 0.0,
+        "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0
+      },
+      {
+        "px": -0.12, "py": 0.0, "pz": 0.0,
+        "qx": 0.0,  "qy": 0.0, "qz": 0.0, "qw": 1.0
+      }
+    ],
+    "intrinsics": [
+      {
+        "camera_type": "pinhole-radtan8",
+        "intrinsics": {
+          "fx": 431.0, "fy": 431.0, "cx": 320.0, "cy": 240.0,
+          "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0,
+          "k3": 0.0, "k4": 0.0, "k5": 0.0, "k6": 0.0
+        }
+      },
+      {
+        "camera_type": "pinhole-radtan8",
+        "intrinsics": {
+          "fx": 431.0, "fy": 431.0, "cx": 320.0, "cy": 240.0,
+          "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0,
+          "k3": 0.0, "k4": 0.0, "k5": 0.0, "k6": 0.0
+        }
+      }
+    ],
+    "resolution": [
+      [640, 480],
+      [640, 480]
+    ],
+    "calib_accel_bias": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "calib_gyro_bias":  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "imu_update_rate": 200.0,
+    "accel_noise_std": [0.016, 0.016, 0.016],
+    "gyro_noise_std":  [0.000282, 0.000282, 0.000282],
+    "accel_bias_std":  [0.001, 0.001, 0.001],
+    "gyro_bias_std":   [0.0001, 0.0001, 0.0001]
+  }
+}
+```
+
+Key fields:
+
+- `T_imu_cam` — IMU-to-camera extrinsic transforms (one per camera). `px/py/pz` is translation in metres; `qx/qy/qz/qw` is rotation as quaternion.
+- `intrinsics` — `fx`, `fy`, `cx`, `cy` in pixels; distortion coefficients for your chosen `camera_type`.
+- `resolution` — `[width, height]` per camera.
+- `imu_update_rate` — IMU frequency in Hz (commonly 200 or 400).
+- Noise parameters — check your IMU datasheet or Kalibr output. Common values for consumer IMUs are listed in the [Camera Calibration](#camera-calibration) section.
+
+If the bag was recorded with an OAK camera or was previously calibrated with basalt, you may already have a compatible `calibration.json` — use it directly.
+
+### Step 3 — Create a replay VIO config
+
+The default `vio_config.json` has `config.vio_enforce_realtime: true`, which causes the optimizer to **skip frames** when the CPU is under load. During bag playback this can degrade or break tracking. Copy the config and disable it:
+
+```bash
+cp src/basalt_ros2/config/vio_config.json \
+   src/basalt_ros2/config/vio_config_replay.json
+```
+
+Edit `vio_config_replay.json` and change:
+
+```json
+"config.vio_enforce_realtime": false
+```
+
+If the bag was recorded at a low framerate (< 15 fps), also set:
+
+```json
+"config.optical_flow_skip_frames": 0
+```
+
+This processes every frame instead of every 3rd frame.
+
+### Step 4 — Terminal 1: Play the bag
+
+```bash
+source /opt/ros/jazzy/setup.bash
+ros2 bag play /path/to/recording.mcap --clock
+```
+
+`--clock` publishes `/clock` so the VIO node uses bag timestamps rather than wall-clock time. If your machine is slow, add `--rate 0.5` to play at half speed.
+
+### Step 5 — Terminal 2: Run the VIO node
+
+Substitute the topic names found in Step 1:
+
+```bash
+cd $DEV_HOME/ros2_ws
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+ros2 run basalt_ros2 visual_odometry_node \
+  --ros-args \
+  -p calib_path:=$(pwd)/src/basalt_ros2/config/colleague_calibration.json \
+  -p config_path:=$(pwd)/src/basalt_ros2/config/vio_config_replay.json \
+  -p imu_topic:=/imu/data \
+  -p left_image_topic:=/camera/left/image_raw \
+  -p right_image_topic:=/camera/right/image_raw \
+  -p publish_cloud:=true \
+  -p publish_images:=true
+```
+
+All topic names are overridable parameters — no code changes are needed to work with a different camera rig.
+
+### Step 6 — View in Foxglove
+
+#### Option A — Live bridge (recommended for interactive review)
+
+Install and run the Foxglove ROS2 bridge:
+
+```bash
+sudo apt install ros-jazzy-foxglove-bridge
+source /opt/ros/jazzy/setup.bash
+ros2 run foxglove_bridge foxglove_bridge
+```
+
+Open [Foxglove Studio](https://app.foxglove.dev) and connect to `ws://localhost:8765`. Useful topics to add:
+
+| Topic | Panel type |
+|---|---|
+| `/basalt_vio/left/image_annotated` | Image — shows tracked keypoints |
+| `/basalt_vio/right/image_annotated` | Image |
+| `/odometry` | 3D / Plot |
+| `/keypoints` | 3D — landmark cloud |
+| `/basalt_vio/status` | State transitions |
+| `/basalt_vio/keypoint_ratio` | Plot — tracking quality (healthy ≥ 0.5) |
+
+#### Option B — Re-record outputs as a new bag
+
+Play the original bag, run the VIO node, and record the outputs to a new MCAP. This can then be opened directly in Foxglove without a live ROS session:
+
+```bash
+ros2 bag record \
+  /odometry \
+  /keypoints \
+  /basalt_vio/left/image_annotated \
+  /basalt_vio/right/image_annotated \
+  /basalt_vio/status \
+  /basalt_vio/keypoint_ratio \
+  -o basalt_output
+```
+
+Open `basalt_output/basalt_output_0.mcap` in Foxglove Studio using **File → Open local file**.
+
+---
+
+### Converting a ROS 1 bag to MCAP
+
+ROS 1 is not available on Ubuntu 24.04 / Jazzy, so conversion is done with the standalone Python library `rosbags` (no ROS 1 install required). It handles message-type renaming automatically (`std_msgs/String` → `std_msgs/msg/String`, etc.).
+
+**Install once:**
+
+```bash
+pip3 install rosbags
+# on systems that block global pip installs:
+# pip3 install rosbags --break-system-packages
+```
+
+**Convert to a ROS 2 SQLite bag:**
+
+```bash
+rosbags-convert my_ros1_recording.bag --dst my_ros2_bag
+```
+
+This is sufficient if you only need `ros2 bag play`. Stop here and follow the [playback steps above](#bag--mcap-playback).
+
+**Optional — convert the SQLite bag to MCAP** (required for Foxglove direct-open or strict MCAP pipelines):
+
+```bash
+source /opt/ros/jazzy/setup.bash
+
+# Create a one-time conversion config
+cat > convert_config.yaml << 'EOF'
+output_bags:
+  - uri: my_final_mcap_bag
+    storage_id: mcap
+EOF
+
+ros2 bag convert my_ros2_bag convert_config.yaml
+```
+
+The result is `my_final_mcap_bag/` containing the `.mcap` file and `metadata.yaml`. Play it with `ros2 bag play my_final_mcap_bag` or open it directly in Foxglove.
+
+**Custom message types:** `rosbags` handles all standard ROS messages automatically. If the bag contains custom message types, point the tool at the ROS 1 `.msg` definitions:
+
+```bash
+rosbags-convert my_ros1_recording.bag --dst my_ros2_bag \
+  --srcdefs /path/to/my_custom_msgs/msg
+```
+
+---
 
 ## Configuration
 
