@@ -1,0 +1,36 @@
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: Stereo
+      i_enable_imu: true
+    left:
+      i_publish_topic: true
+      i_board_socket_id: 1  # CAM_B - OV9282 (monochrome)
+      i_fps: 20.0
+      i_width: 640
+      i_height: 400
+      i_synced: true
+      i_image_transport_type: raw
+      r_set_man_exposure: true
+      r_exposure: 10000      # 10ms = 1 flicker cycle (50Hz mains); use 8333 for 60Hz
+      r_set_iso: true
+      r_iso: 100             # Tune if too bright/dark
+    right:
+      i_publish_topic: true
+      i_board_socket_id: 2  # CAM_C - OV9282 (monochrome)
+      i_fps: 20.0
+      i_width: 640
+      i_height: 400
+      i_synced: true
+      i_image_transport_type: raw
+      r_set_man_exposure: true
+      r_exposure: 10000
+      r_set_iso: true
+      r_iso: 100
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 100
+      i_gyro_freq: 100    
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"

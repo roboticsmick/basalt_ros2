@@ -28,7 +28,7 @@ optical_flow_pattern: 50
 
 # Lucas-Kanade solver iterations per pyramid level per tracked point. Higher = more accurate tracking.
 # Range: 1–10 (typical). Default: 6. Effect: >6 gives diminishing returns; 6 good compromise.
-optical_flow_max_iterations: 6
+optical_flow_max_iterations: 8
 
 # Pyramid depth: levels N,N-1,...,0 built from each image (N+1 effective scales).
 # pyramid_levels=4 → scales 4,3,2,1,0 (5 total). Default: 4 (5 scales).
@@ -38,12 +38,24 @@ optical_flow_levels: 4
 # Epipolar constraint filter for stereo matching (in normalized camera coordinates after model unprojection).
 # Points violating |p_left^T * E * p_right| < threshold are rejected from stereo pairing.
 # Range: 0.003–0.05. Default: 0.01. Effect: 0.01 is 2× more lenient than 0.005; good for noisy calibration.
-optical_flow_epipolar_error: 0.01
+optical_flow_epipolar_error: 0.007
 
 # Forward only every Nth frame to VIO estimator (all frames still tracked internally for continuity).
 # skip_frames=2 → every other frame → VIO gets ~15 Hz input (if camera is 30 Hz); halves optical flow CPU.
 # Range: 1–4 (typical). Default: 2. Effect: higher = lower latency/CPU, but sparser pose updates.
 optical_flow_skip_frames: 2
+
+# Maximum number of features tracked by optical flow (0 = unlimited).
+# Cap at 400 for Jetson Orin: reduces per-frame LKT cost ~4-5x and improves
+# confirmed/tracked ratio (VIO sliding window confirms ~200-300 landmarks;
+# 400 tracked → ratio ~0.5 vs ~0.13 with 1500+ uncapped).
+optical_flow_max_features: 200
+
+# FAST corner detector initial threshold. Adaptively halves down to floor=5 if insufficient corners found.
+# Lower values detect weaker gradients — useful for feature-poor scenes (sand, seagrass, uniform surfaces).
+# Range: 5–60. Default: 40. Effect: 20 detects ~2× more corners in low-texture scenes.
+# No extra compute when optical_flow_max_features cap is active — extra detections discarded at the cap.
+optical_flow_fast_threshold: 40
 
 # == VIO Solver Type ==
 # Controls linearization/factorization algorithm for bundle adjustment.
@@ -83,8 +95,14 @@ vio_new_kf_keypoints_thresh: 0.7
 # == VIO Tuning ==
 # Fine-grained optimization parameters.
 
-# Enable debug output (expensive; prints tracking info to console). Range: true | false. Default: false.
+# Enable debug output (expensive; prints solver internals to console). Range: true | false. Default: false.
+# WARNING: produces [LINEARIZE]/[EVAL]/[ACCEPTED] spam every VIO frame — only use for solver debugging.
 vio_debug: false
+
+# Enable node-level structured health log (throttled to 10s). Range: true | false. Default: false.
+# Prints: kp=0.19 (46/239 L | 22/239 R) | speed=0.003m/s | health: kp=OK vel=OK accel=FAIL
+# Independent of vio_debug — safe to enable without solver spam.
+vio_node_debug: true
 
 # Extended logging for offline analysis. Range: true | false. Default: false.
 vio_extended_logging: false
@@ -171,7 +189,7 @@ vio_health_max_velocity: 1.5
 
 # Maximum expected speed change per VIO step (m/s) — above this, acceleration health fails.
 # Detects sudden jumps from tracking errors, not real acceleration.
-vio_health_max_acceleration: 0.2
+vio_health_max_acceleration: 1.0
 
 # How long (seconds) all criteria must stay healthy before startup is declared valid.
 # Shorter = faster to start publishing; longer = more confidence before first pose.

@@ -28,7 +28,7 @@
   ros__parameters:
     pipeline_gen:
       i_nn_type: none
-      i_pipeline_type: RGBD          # Still RGBD for camera calibration, but RGB NOT synced
+      i_pipeline_type: RGBStereo          # Still RGBD for camera calibration, but RGB NOT synced
       i_enable_imu: true
       i_enable_vio: false            # VIO disabled (use basalt_ros2 on host instead)
       i_enable_sync: true            # Enable sync for stereo pair only
@@ -42,19 +42,11 @@
     left:
       i_publish_topic: true
       i_board_socket_id: 1           # CAM_B - OV9282 (left)
-      i_fps: 30.0
+      i_fps: 20.0
       i_width: 640
       i_height: 400
       i_synced: true                 # Synced with RIGHT only (via stereo node)
       i_image_transport_type: raw
-
-      # === IMAGE QUALITY ===
-      r_set_sharpness: true
-      r_sharpness: 1
-      r_set_luma_denoise: true
-      r_luma_denoise: 3
-      r_set_chroma_denoise: true
-      r_chroma_denoise: 2
 
       # === EXPOSURE ===
       r_set_man_exposure: false
@@ -64,52 +56,16 @@
     right:
       i_publish_topic: true
       i_board_socket_id: 2           # CAM_C - OV9282 (right)
-      i_fps: 30.0
+      i_fps: 20.0
       i_width: 640
       i_height: 400
       i_synced: true                 # Synced with left only (via stereo node)
       i_image_transport_type: raw
 
-      # === IMAGE QUALITY ===
-      r_set_sharpness: true
-      r_sharpness: 1
-      r_set_luma_denoise: true
-      r_luma_denoise: 3
-      r_set_chroma_denoise: true
-      r_chroma_denoise: 2
-
       # === EXPOSURE ===
       r_set_man_exposure: false
       r_set_auto_exposure_limit: true
       r_auto_exposure_limit: 6000
-
-    # ===================================================================
-    # === STEREO DEPTH (for optional Jetson processing) ===
-    # ===================================================================
-    # NOT synced with RGB - allows faster frame rate
-    # Can be disabled if only VIO odometry is needed
-
-    stereo:
-      i_publish_topic: false
-      i_output_disparity: false
-      i_depth_preset: FAST_ACCURACY
-      i_fps: 30.0
-      i_left_socket_id: 1            # CAM_B
-      i_right_socket_id: 2           # CAM_C
-      i_width: 640
-      i_height: 400
-      i_synced: true                 # Synced with left+right pair
-      i_left_rect_publish_topic: false
-      i_right_rect_publish_topic: false
-      i_enable_distortion_correction: true
-      i_image_transport_type: raw
-
-      # === MINIMAL FILTERS ===
-      i_use_host_filters: true
-      i_median_filter: "KERNEL_3x3"
-      i_enable_spatial_filter: false
-      i_enable_temporal_filter: false
-      i_enable_speckle_filter: false
 
     # ===================================================================
     # === RGB (OPTIONAL - NOT SYNCED WITH STEREO) ===
@@ -127,7 +83,7 @@
       i_enable_jpeg: true
       i_mjpeg_quality: 90
       i_format: "MJPEG"
-      #i_image_transport_type: raw
+      # i_image_transport_type: raw
 
       # === IMAGE QUALITY ===
       r_set_sharpness: true

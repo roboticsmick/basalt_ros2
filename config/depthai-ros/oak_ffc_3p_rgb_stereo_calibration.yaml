@@ -1,0 +1,72 @@
+# OAK-FFC-3P RGB + Stereo Calibration Recording Configuration
+#
+# Purpose: Record a bag file for stereo and RGB-camera calibration deptha-core camera calibration tool.
+#
+# Usage:
+# Terminal 1: Launch the camera from the OAK-FFC-3P camera module
+#   ros2 launch depthai_ros_driver driver.launch.py \
+#     params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_rgb_stereo_calibration.yaml \
+#     camera_model:=OAK-FFC-3P
+#
+# Then record (in a second terminal):
+#   Terminal 2: Record all 3 cameras (30-60 seconds) for calibration
+#   ros2 bag record -o stereo_rgb_imu_calibration_record \
+#     /oak/left/image_raw \
+#     /oak/rgb/image_raw \
+#     /oak/right/image_raw
+#
+
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: RGBStereo
+      i_enable_imu: false
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 20.0            # Low FPS for detailed 4K imagery without excessive bandwidth
+      i_width: 1920
+      i_height: 1080
+      i_synced: true
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)
+    left:
+      i_publish_topic: true
+      i_board_socket_id: 1  # CAM_B - OV9782
+      i_fps: 20.0
+      i_width: 640
+      i_height: 400
+      i_synced: true
+      i_image_transport_type: raw
+      r_set_man_exposure: true
+      r_exposure: 10000
+      r_set_iso: true
+      r_iso: 100
+    right:
+      i_publish_topic: true
+      i_board_socket_id: 2  # CAM_C - OV9782
+      i_fps: 20.0
+      i_width: 640
+      i_height: 400
+      i_synced: true
+      i_image_transport_type: raw
+      r_set_man_exposure: true
+      r_exposure: 10000
+      r_set_iso: true
+      r_iso: 100
+
+
+
