@@ -40,11 +40,22 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(NOT CXX_MARCH)
-  set(CXX_MARCH native)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|AARCH64)" AND NOT APPLE)
+    # aarch64 Linux (Pi 5, Jetson): use armv8-a baseline to match opengv's own
+    # add_definitions(-march=armv8-a).  Using "native" here creates a
+    # multi-word string in CMAKE_CXX_FLAGS that CMake 3.28 quotes into one
+    # argument when merging with COMPILE_OPTIONS, confusing cc1plus.
+    set(CXX_MARCH armv8-a)
+  else()
+    set(CXX_MARCH native)
+  endif()
 endif()
 
 if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
-  set(BASALT_MARCH_FLAGS "-march=${CXX_MARCH} -mtune=${CXX_MARCH} -ftree-vectorize")
+  # Use add_compile_options (list) not CMAKE_CXX_FLAGS (string) so each flag
+  # is a separate element — avoids CMake quoting the whole string as one
+  # compiler argument when combined with subdirectory COMPILE_OPTIONS.
+  add_compile_options(-march=${CXX_MARCH} -mtune=${CXX_MARCH} -ftree-vectorize)
 else()
   message(STATUS "Running on Apple ${CMAKE_SYSTEM_PROCESSOR}. Disabled -march flag.")
 endif()
@@ -72,7 +83,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -DEIGEN_DONT_PARALLELIZE")
-set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${BASALT_MARCH_FLAGS} ${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${CMAKE_CXX_FLAGS}")
 
 if(UNIX AND NOT APPLE)
   set(STD_CXX_FS stdc++fs)
