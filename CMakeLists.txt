@@ -46,8 +46,11 @@ if(NOT CXX_MARCH)
     # multi-word string in CMAKE_CXX_FLAGS that CMake 3.28 quotes into one
     # argument when merging with COMPILE_OPTIONS, confusing cc1plus.
     set(CXX_MARCH armv8-a)
+    # -mtune does not accept arch specs like armv8-a; omit it for aarch64
+    set(CXX_MTUNE "")
   else()
     set(CXX_MARCH native)
+    set(CXX_MTUNE native)
   endif()
 endif()
 
@@ -55,7 +58,11 @@ if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
   # Use add_compile_options (list) not CMAKE_CXX_FLAGS (string) so each flag
   # is a separate element — avoids CMake quoting the whole string as one
   # compiler argument when combined with subdirectory COMPILE_OPTIONS.
-  add_compile_options(-march=${CXX_MARCH} -mtune=${CXX_MARCH} -ftree-vectorize)
+  if(CXX_MTUNE)
+    add_compile_options(-march=${CXX_MARCH} -mtune=${CXX_MTUNE} -ftree-vectorize)
+  else()
+    add_compile_options(-march=${CXX_MARCH} -ftree-vectorize)
+  endif()
 else()
   message(STATUS "Running on Apple ${CMAKE_SYSTEM_PROCESSOR}. Disabled -march flag.")
 endif()
