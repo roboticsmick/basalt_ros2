@@ -1,0 +1,2 @@
+# Override parent *build* rule — buildtests.in is a CMake template, not a build artifact
+!buildtests.in
