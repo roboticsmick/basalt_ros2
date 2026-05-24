@@ -13,6 +13,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <basalt_ros2/msg/keypoint_stats.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -56,6 +57,7 @@ class VisualOdometerNode : public rclcpp::Node {
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pcl_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr status_pub_;
+  rclcpp::Publisher<basalt_ros2::msg::KeypointStats>::SharedPtr keypoint_stats_pub_;
   image_transport::Publisher left_img_pub_;
   image_transport::Publisher right_img_pub_;
 
@@ -101,6 +103,8 @@ class VisualOdometerNode : public rclcpp::Node {
   // Runtime state flags
   std::atomic<bool> should_reset_{false};    // set by statusThread, cleared by runtimeThread
   std::atomic<bool> startup_success_{false}; // set by statusThread, cleared on reset
+  std::atomic<float> last_speed_{0.0f};      // updated by odometerThread, read by statusThread
+  bool node_debug_{false};                   // enable verbose throttled health logging
 
   // Thread functions
   void cameraProcessingThread();  // always running — feeds optical flow + IMU

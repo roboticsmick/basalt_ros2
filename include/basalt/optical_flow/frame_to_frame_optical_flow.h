@@ -306,37 +306,47 @@ class FrameToFrameOpticalFlow : public OpticalFlowBase {
   }
 
   void addPoints() {
-    Eigen::aligned_vector<Eigen::Vector2d> pts0;
+    const size_t current = transforms->observations.at(0).size();
+    const bool has_cap = config.optical_flow_max_features > 0;
 
-    for (const auto& kv : transforms->observations.at(0)) {
+    if (has_cap && static_cast<int>(current) >= config.optical_flow_max_features)
+      return;
+
+    Eigen::aligned_vector<Eigen::Vector2d> pts0;
+    for (const auto& kv : transforms->observations.at(0))
       pts0.emplace_back(kv.second.translation().cast<double>());
-    }
 
     KeypointsData kd;
-
     detectKeypoints(pyramid->at(0).lvl(0), kd,
-                    config.optical_flow_detection_grid_size, 1, pts0);
+                    config.optical_flow_detection_grid_size, 1, pts0,
+                    config.optical_flow_fast_threshold);
+
+    const size_t max_new = has_cap
+        ? static_cast<size_t>(config.optical_flow_max_features) - current
+        : kd.corners.size();
+
+    const size_t stride = (has_cap && kd.corners.size() > max_new)
+        ? std::max(size_t(1), kd.corners.size() / max_new)
+        : 1;
 
     Eigen::aligned_map<KeypointId, Eigen::AffineCompact2f> new_poses0,
         new_poses1;
 
-    for (size_t i = 0; i < kd.corners.size(); i++) {
+    for (size_t i = 0, count = 0;
+         i < kd.corners.size() && count < max_new;
+         i += stride, ++count) {
       Eigen::AffineCompact2f transform;
       transform.setIdentity();
       transform.translation() = kd.corners[i].cast<Scalar>();
-
       transforms->observations.at(0)[last_keypoint_id] = transform;
       new_poses0[last_keypoint_id] = transform;
-
       last_keypoint_id++;
     }
 
     if (calib.intrinsics.size() > 1) {
       trackPoints(pyramid->at(0), pyramid->at(1), new_poses0, new_poses1);
-
-      for (const auto& kv : new_poses1) {
+      for (const auto& kv : new_poses1)
         transforms->observations.at(1).emplace(kv);
-      }
     }
   }
 

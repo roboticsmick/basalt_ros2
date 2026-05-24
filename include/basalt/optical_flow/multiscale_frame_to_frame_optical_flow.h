@@ -372,7 +372,8 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowBase {
       }
 
       detectKeypoints(pyramid->at(0).lvl(level), kd,
-                      config.optical_flow_detection_grid_size, 1, pts);
+                      config.optical_flow_detection_grid_size, 1, pts,
+                      config.optical_flow_fast_threshold);
 
       const Scalar scale = 1 << level;
 

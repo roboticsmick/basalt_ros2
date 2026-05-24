@@ -46,6 +46,7 @@ int main(int argc, char **argv) {
   std::string result_path;
   std::string cache_dataset_name = "calib-cam-imu";
   int skip_images = 1;
+  std::string output_format = "json";
 
   double accel_noise_std = 0.016;
   double gyro_noise_std = 0.000282;
@@ -78,6 +79,10 @@ int main(int argc, char **argv) {
                  "Name to save cached files");
 
   app.add_option("--skip-images", skip_images, "Number of images to skip");
+  app.add_option("--output-format", output_format,
+                 "Output format: json (default) or yaml. "
+                 "When yaml is chosen both calibration.json and calibration.yaml "
+                 "are written — JSON is kept so the result is readable by other tools.");
 
   try {
     app.parse(argc, argv);
@@ -85,10 +90,12 @@ int main(int argc, char **argv) {
     return app.exit(e);
   }
 
+  const bool save_yaml = (output_format == "yaml");
   basalt::CamImuCalib cv(
       dataset_path, dataset_type, aprilgrid_path, result_path,
       cache_dataset_name, skip_images,
-      {accel_noise_std, gyro_noise_std, accel_bias_std, gyro_bias_std});
+      {accel_noise_std, gyro_noise_std, accel_bias_std, gyro_bias_std},
+      /*show_gui=*/true, save_yaml);
 
   cv.renderingLoop();
 

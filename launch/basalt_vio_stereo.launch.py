@@ -43,6 +43,16 @@ def generate_launch_description():
         default_value="",
         description="Path to Basalt VIO config file",
     )
+    depthai_config_arg = DeclareLaunchArgument(
+        "depthai_config",
+        default_value="",
+        description="Path to depthai-ros camera YAML (reads i_width/i_height for resolution scaling)",
+    )
+    namespace_arg = DeclareLaunchArgument(
+        "vio_namespace",
+        default_value="",
+        description="ROS2 namespace for VisualOdometerNode (e.g. /orca/sensors/visual_odometer). Empty = no namespace.",
+    )
     imu_topic_arg = DeclareLaunchArgument(
         "imu_topic",
         default_value="/oak/imu/data",
@@ -73,8 +83,10 @@ def generate_launch_description():
                 name="calibration_publisher",
                 parameters=[
                     {"calib_path": LaunchConfiguration("calib_path")},
+                    {"depthai_config_path": LaunchConfiguration("depthai_config")},
                     {"left_camera_info_topic": "/basalt/left/camera_info"},
                     {"right_camera_info_topic": "/basalt/right/camera_info"},
+                    {"rgb_camera_info_topic": "/basalt/rgb/camera_info"},
                     {"publish_interval_hz": 10},
                 ],
                 extra_arguments=[{"use_intra_process_comms": True}],
@@ -84,6 +96,7 @@ def generate_launch_description():
                 package="basalt_ros2",
                 plugin="basalt::VisualOdometerNode",
                 name="visual_odometry_node",
+                namespace=LaunchConfiguration("vio_namespace"),
                 parameters=[
                     {"calib_path": LaunchConfiguration("calib_path")},
                     {"config_path": LaunchConfiguration("config_path")},
@@ -170,6 +183,8 @@ def generate_launch_description():
     return LaunchDescription([
         calib_path_arg,
         config_path_arg,
+        depthai_config_arg,
+        namespace_arg,
         imu_topic_arg,
         left_image_topic_arg,
         right_image_topic_arg,

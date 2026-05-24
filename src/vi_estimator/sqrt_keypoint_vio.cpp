@@ -275,7 +275,10 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_,
 template <class Scalar_>
 void SqrtKeypointVioEstimator<Scalar_>::addIMUToQueue(
     const ImuData<double>::Ptr& data) {
-  imu_data_queue.emplace(data);
+  if (!imu_data_queue.try_push(data)) {
+    std::cerr << "[basalt] IMU queue full (capacity=" << imu_data_queue.capacity()
+              << ") — dropping sample at t_ns=" << data->t_ns << std::endl;
+  }
 }
 
 template <class Scalar_>
@@ -1110,9 +1113,15 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
         // linearize residuals
         bool numerically_valid;
         error_total = lqr->linearizeProblem(&numerically_valid);
-        BASALT_ASSERT_STREAM(
-            numerically_valid,
-            "did not expect numerical failure during linearization");
+        if (!numerically_valid) {
+          std::cerr << "[basalt_ros2] WARNING: numerical failure during "
+                       "linearization (iteration "
+                    << it
+                    << ") — aborting optimization, triggering VIO reset"
+                    << std::endl;
+          if (out_state_queue) out_state_queue->push(nullptr);
+          return;
+        }
         stats.add("linearizeProblem", t.reset()).format("ms");
 
         //        // compute pose jacobian norm squared for Jacobian scaling

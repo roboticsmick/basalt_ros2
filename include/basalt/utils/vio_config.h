@@ -53,6 +53,8 @@ struct VioConfig {
   int optical_flow_levels;
   float optical_flow_epipolar_error;
   int optical_flow_skip_frames;
+  int optical_flow_max_features;
+  int optical_flow_fast_threshold;
 
   LinearizationType vio_linearization_type;
   bool vio_sqrt_marg;

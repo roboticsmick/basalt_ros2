@@ -5,6 +5,11 @@ if(POLICY CMP0002)
   cmake_policy(SET CMP0002 OLD)
 endif()
 
+# Pangolin's project() call has no VERSION — suppress the warning
+if(POLICY CMP0048)
+  cmake_policy(SET CMP0048 NEW)
+endif()
+
 project(basalt_ros2 VERSION 0.1.0 LANGUAGES CXX C)
 
 find_package(ament_cmake REQUIRED)
@@ -39,7 +44,7 @@ if(NOT CXX_MARCH)
 endif()
 
 if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
-  set(BASALT_MARCH_FLAGS "-march=${CXX_MARCH}")
+  set(BASALT_MARCH_FLAGS "-march=${CXX_MARCH} -mtune=${CXX_MARCH} -ftree-vectorize")
 else()
   message(STATUS "Running on Apple ${CMAKE_SYSTEM_PROCESSOR}. Disabled -march flag.")
 endif()
@@ -56,7 +61,7 @@ set(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -DEIGEN_INITIALIZE_MATRICES_BY_NAN")
 set(BASALT_CXX_FLAGS "-Wall -Wextra -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough")
+  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-maybe-uninitialized -Wno-array-bounds -Wno-error=implicit-fallthrough")
   set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=strict-aliasing -Wno-error=stringop-overflow")
   if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9)
     set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=deprecated-copy")
@@ -77,7 +82,7 @@ endif()
 ################ TEMPLATE OPTIONS ################
 
 option(BASALT_INSTANTIATIONS_DOUBLE "Instantiate templates for Scalar=double." ON)
-option(BASALT_INSTANTIATIONS_FLOAT  "Instantiate templates for Scalar=float."  OFF)
+option(BASALT_INSTANTIATIONS_FLOAT  "Instantiate templates for Scalar=float."  ON)
 
 if(BASALT_INSTANTIATIONS_DOUBLE)
   list(APPEND BASALT_COMPILE_DEFINITIONS BASALT_INSTANTIATIONS_DOUBLE)
@@ -110,6 +115,7 @@ message(STATUS "Found {fmt} ${fmt_VERSION}")
 
 # ROS2 packages
 find_package(rclcpp REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
 find_package(rosbag2_storage REQUIRED)
@@ -258,14 +264,28 @@ if(BASALT_BUILD_CALIBRATION_TOOLS)
     src/calibrate.cpp
     src/calibration/cam_calib.cpp
   )
-  target_link_libraries(basalt_calibrate basalt pangolin basalt::cli11)
+  target_link_libraries(basalt_calibrate basalt pangolin basalt::cli11 yaml-cpp)
 
   add_executable(basalt_calibrate_imu
     src/calibrate_imu.cpp
     src/calibration/cam_imu_calib.cpp
   )
-  target_link_libraries(basalt_calibrate_imu basalt pangolin basalt::cli11)
+  target_link_libraries(basalt_calibrate_imu basalt pangolin basalt::cli11 yaml-cpp)
 endif()
+
+############### CUSTOM MESSAGES ##################
+
+# Force shared libs for message generation — rosidl fastrtps typesupport must be a .so for
+# runtime dlopen discovery; BUILD_SHARED_LIBS=OFF (set by basalt/Eigen sub-trees) would
+# otherwise produce a static archive that the dispatcher can never load.
+set(_bsl_saved ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS ON)
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/KeypointStats.msg"
+)
+set(BUILD_SHARED_LIBS ${_bsl_saved})
+
+##################################################
 
 ##################################################
 ############# ROS2 DEVICE WRAPPER LIBRARY ########
@@ -315,7 +335,8 @@ ament_target_dependencies(visual_odometry_node
   cv_bridge
 )
 
-target_link_libraries(visual_odometry_node basalt_ros2_lib fmt::fmt TBB::tbb yaml-cpp)
+rosidl_get_typesupport_target(vio_node_typesupport ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(visual_odometry_node basalt_ros2_lib fmt::fmt TBB::tbb yaml-cpp "${vio_node_typesupport}")
 
 ##################################################
 ######## ROS2 COMPOSABLE NODES LIBRARY ###########
@@ -349,15 +370,16 @@ ament_target_dependencies(basalt_ros2_components
   cv_bridge
 )
 
-target_link_libraries(basalt_ros2_components basalt fmt::fmt TBB::tbb yaml-cpp ${OpenCV_LIBRARIES})
+rosidl_get_typesupport_target(components_typesupport ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(basalt_ros2_components basalt fmt::fmt TBB::tbb yaml-cpp ${OpenCV_LIBRARIES} "${components_typesupport}")
 
-# Register both composable nodes
-rclcpp_components_register_nodes(basalt_ros2_components
+# Register composable nodes (singular form creates + installs standalone executable)
+rclcpp_components_register_node(basalt_ros2_components
   PLUGIN "basalt::VisualOdometerNode"
   EXECUTABLE visual_odometry_node_composable
 )
 
-rclcpp_components_register_nodes(basalt_ros2_components
+rclcpp_components_register_node(basalt_ros2_components
   PLUGIN "basalt::CalibrationPublisherNode"
   EXECUTABLE calibration_publisher_composable
 )

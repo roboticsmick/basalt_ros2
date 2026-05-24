@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <basalt/calibration/cam_imu_calib.h>
+#include <basalt/calibration/calib_yaml_io.h>
 
 #include <basalt/utils/system_utils.h>
 
@@ -48,7 +49,8 @@ CamImuCalib::CamImuCalib(const std::string &dataset_path,
                          const std::string &aprilgrid_path,
                          const std::string &cache_path,
                          const std::string &cache_dataset_name, int skip_images,
-                         const std::vector<double> &imu_noise, bool show_gui)
+                         const std::vector<double> &imu_noise, bool show_gui,
+                         bool save_yaml)
     : dataset_path(dataset_path),
       dataset_type(dataset_type),
       april_grid(aprilgrid_path),
@@ -56,6 +58,7 @@ CamImuCalib::CamImuCalib(const std::string &dataset_path,
       cache_dataset_name(cache_dataset_name),
       skip_images(skip_images),
       show_gui(show_gui),
+      save_yaml_(save_yaml),
       imu_noise(imu_noise),
       show_frame("ui.show_frame", 0, 0, 1500),
       show_corners("ui.show_corners", true, false, true),
@@ -802,6 +805,12 @@ void CamImuCalib::saveCalib() {
 
     std::cout << "Saved calibration in " << cache_path << "calibration.json"
               << std::endl;
+
+    if (save_yaml_) {
+      const std::string yaml_path = cache_path + "calibration.yaml";
+      saveCalibToYAML(yaml_path, *calib_opt->calib);
+      std::cout << "Saved calibration in " << yaml_path << std::endl;
+    }
   }
 }
 

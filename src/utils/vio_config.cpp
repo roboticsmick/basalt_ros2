@@ -54,6 +54,8 @@ VioConfig::VioConfig() {
   optical_flow_levels = 3;
   optical_flow_epipolar_error = 0.005;
   optical_flow_skip_frames = 1;
+  optical_flow_max_features = 0;
+  optical_flow_fast_threshold = 40;
 
   vio_linearization_type = LinearizationType::ABS_QR;
   vio_sqrt_marg = true;
@@ -130,6 +132,10 @@ void VioConfig::loadFromYAML(const std::string& filename) {
       root["optical_flow_epipolar_error"].as<float>(optical_flow_epipolar_error);
   optical_flow_skip_frames =
       root["optical_flow_skip_frames"].as<int>(optical_flow_skip_frames);
+  optical_flow_max_features =
+      root["optical_flow_max_features"].as<int>(optical_flow_max_features);
+  optical_flow_fast_threshold =
+      root["optical_flow_fast_threshold"].as<int>(optical_flow_fast_threshold);
 
   // VIO solver type (string → enum via magic_enum)
   if (root["vio_linearization_type"]) {
@@ -211,6 +217,8 @@ void serialize(Archive& ar, basalt::VioConfig& config) {
   ar(CEREAL_NVP(config.optical_flow_epipolar_error));
   ar(CEREAL_NVP(config.optical_flow_levels));
   ar(CEREAL_NVP(config.optical_flow_skip_frames));
+  ar(CEREAL_NVP(config.optical_flow_max_features));
+  ar(CEREAL_NVP(config.optical_flow_fast_threshold));
 
   ar(CEREAL_NVP(config.vio_linearization_type));
   ar(CEREAL_NVP(config.vio_sqrt_marg));

@@ -27,6 +27,7 @@ class RosImuDevice : public ImuInterface {
 
   void start();
   void stop();
+  void flushBuffers();
 
   // Queue for IMU input (used by node)
   tbb::concurrent_queue<basalt::ImuData<double>::Ptr>* imu_data_queue = nullptr;
@@ -38,6 +39,7 @@ class RosImuDevice : public ImuInterface {
   std::mutex buffer_mutex_;
   std::deque<std::pair<uint64_t, std::pair<Eigen::Vector3d, Eigen::Vector3d>>> imu_buffer_;
   bool is_running_ = false;
+  uint64_t last_received_t_ns_ = 0;
 
   void imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr& msg);
 };

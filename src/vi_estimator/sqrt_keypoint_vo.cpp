@@ -1006,9 +1006,15 @@ void SqrtKeypointVoEstimator<Scalar_>::optimize() {
     // linearize residuals
     bool numerically_valid;
     error_total = lqr->linearizeProblem(&numerically_valid);
-    BASALT_ASSERT_STREAM(
-        numerically_valid,
-        "did not expect numerical failure during linearization");
+    if (!numerically_valid) {
+      std::cerr << "[basalt_ros2] WARNING: numerical failure during "
+                   "linearization (iteration "
+                << it
+                << ") — aborting optimization, triggering VIO reset"
+                << std::endl;
+      if (out_state_queue) out_state_queue->push(nullptr);
+      return;
+    }
     stats.add("linearizeProblem", t.reset()).format("ms");
 
     //      // compute pose jacobian norm squared for Jacobian scaling

@@ -88,6 +88,13 @@ struct OdometerHealthTrack {
     return runtime_valid;
   }
 
+  /// True after the first call to update(). Distinguishes "no data yet" from
+  /// "data received and failed" — both leave runtime_valid=false after reset().
+  bool is_initialised() {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    return initialised;
+  }
+
   /// @param timeout_sec  Seconds of consecutive failure before runtime_healthy() → false (0 = immediate)
   /// @param startup_sec  Seconds of consecutive success before startup_healthy() → true
   OdometerHealthTrack(double timeout_sec, double startup_sec)

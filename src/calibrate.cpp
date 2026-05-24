@@ -45,6 +45,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> cam_types;
   std::string cache_dataset_name = "calib-cam";
   int skip_images = 1;
+  std::string output_format = "json";
 
   CLI::App app{"Calibrate IMU"};
 
@@ -66,6 +67,10 @@ int main(int argc, char **argv) {
   app.add_option("--cam-types", cam_types,
                  "Type of cameras (pinhole, pinhole-radtan8, ds, kb4, eucm, ucm, fov)")
       ->required();
+  app.add_option("--output-format", output_format,
+                 "Output format: json (default) or yaml. "
+                 "When yaml is chosen both calibration.json and calibration.yaml "
+                 "are written — JSON is kept for the basalt_calibrate_imu pipeline step.");
 
   try {
     app.parse(argc, argv);
@@ -73,8 +78,10 @@ int main(int argc, char **argv) {
     return app.exit(e);
   }
 
+  const bool save_yaml = (output_format == "yaml");
   basalt::CamCalib cv(dataset_path, dataset_type, aprilgrid_path, result_path,
-                      cache_dataset_name, skip_images, cam_types);
+                      cache_dataset_name, skip_images, cam_types,
+                      /*show_gui=*/true, save_yaml);
 
   cv.renderingLoop();
 

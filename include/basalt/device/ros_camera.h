@@ -32,6 +32,7 @@ class RosCameraDevice : public CameraInterface {
 
   void start();
   void stop();
+  void flushBuffers();
   std::string getFrameId() const;
   basalt::Calibration<double> exportCalibration();
 

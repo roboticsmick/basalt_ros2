@@ -62,7 +62,8 @@ class CamImuCalib {
   CamImuCalib(const std::string &dataset_path, const std::string &dataset_type,
               const std::string &aprilgrid_path, const std::string &cache_path,
               const std::string &cache_dataset_name, int skip_images,
-              const std::vector<double> &imu_noise, bool show_gui = true);
+              const std::vector<double> &imu_noise, bool show_gui = true,
+              bool save_yaml = false);
 
   ~CamImuCalib();
 
@@ -131,6 +132,7 @@ class CamImuCalib {
   int skip_images;
 
   bool show_gui;
+  bool save_yaml_;
 
   const size_t MIN_CORNERS = 15;
 
